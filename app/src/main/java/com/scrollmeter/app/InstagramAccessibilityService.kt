@@ -26,6 +26,7 @@ class InstagramAccessibilityService : AccessibilityService() {
     private var liveTickerJob: Job? = null
     private lateinit var database: AppDatabase
     private lateinit var notchOverlayManager: NotchOverlayManager
+    private lateinit var liveNotificationManager: LiveNotificationManager
 
     // Session tracking
     private var currentSessionId: Long = 0L
@@ -66,6 +67,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         super.onCreate()
         database = AppDatabase.getInstance(applicationContext)
         notchOverlayManager = NotchOverlayManager(this)
+        liveNotificationManager = LiveNotificationManager(this)
     }
 
     override fun onServiceConnected() {
@@ -96,6 +98,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         liveTickerJob?.cancel()
         dwellJob?.cancel()
         notchOverlayManager.destroy()
+        liveNotificationManager.cancel()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
     }
@@ -104,12 +107,18 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (event == null) return
 
         val eventPkg = event.packageName?.toString() ?: ""
+        // Crucial: Ignore events from our own app and floating overlay so we never self-interrupt!
+        if (eventPkg == packageName || eventPkg == "com.scrollmeter.app") {
+            return
+        }
+
         if (eventPkg != INSTAGRAM_PKG) {
             commitActiveReelTime()
             liveTickerJob?.cancel()
             dwellJob?.cancel()
             activeCreator = ""
             notchOverlayManager.hide()
+            liveNotificationManager.cancel()
             return
         }
 
@@ -122,11 +131,16 @@ class InstagramAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
         try {
             val rootPkg = rootNode.packageName?.toString() ?: ""
+            if (rootPkg == packageName || rootPkg == "com.scrollmeter.app") {
+                return
+            }
             if (rootPkg != INSTAGRAM_PKG) {
                 commitActiveReelTime()
                 liveTickerJob?.cancel()
                 dwellJob?.cancel()
                 activeCreator = ""
+                notchOverlayManager.hide()
+                liveNotificationManager.cancel()
                 return
             }
 
@@ -230,6 +244,7 @@ class InstagramAccessibilityService : AccessibilityService() {
             dwellJob?.cancel()
             activeCreator = ""
             notchOverlayManager.hide()
+            liveNotificationManager.cancel()
             return
         }
 
@@ -242,7 +257,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (pageName.isBlank()) return
 
         // 1. Check if this is the SAME Reel currently playing
-        val isSameReel = (activeRecordId > 0L || dwellJob?.isActive == true) &&
+        val isSameReel = activeCreator.isNotBlank() &&
                 pageName.equals(activeCreator, ignoreCase = true)
 
         if (isSameReel) {
@@ -360,6 +375,7 @@ class InstagramAccessibilityService : AccessibilityService() {
 
                 withContext(Dispatchers.Main) {
                     notchOverlayManager.showOrUpdate(sessionDuration, sessionReels)
+                    liveNotificationManager.showOrUpdate(sessionDuration, sessionReels)
                 }
 
                 delay(1000L)
@@ -439,6 +455,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         liveTickerJob?.cancel()
         dwellJob?.cancel()
         notchOverlayManager.hide()
+        liveNotificationManager.cancel()
         Log.w(TAG, "ScrollMeter Accessibility Service Interrupted")
     }
 }
