@@ -172,25 +172,42 @@ class InstagramAccessibilityService : AccessibilityService() {
                     if (creator.isNotEmpty() && detectedCreator.isEmpty()) {
                         detectedCreator = creator
                     }
-                } else if (desc.contains("Original audio", ignoreCase = true) || desc.contains("Audio", ignoreCase = true)) {
-                    detectedAudio = desc.take(60)
+                } else if (desc.contains("Original audio", ignoreCase = true) ||
+                    (desc.contains("audio", ignoreCase = true) && desc.length > 8 && !desc.equals("Audio", ignoreCase = true))
+                ) {
+                    if (detectedAudio.isEmpty()) {
+                        detectedAudio = desc.take(60)
+                    }
                 }
             }
 
             // Extract caption & audio text
             if (!text.isNullOrEmpty()) {
-                if (text.contains("Original audio", ignoreCase = true)) {
+                val isAudioText = text.contains("Original audio", ignoreCase = true) ||
+                        text.contains(" · ", ignoreCase = true) && text.contains("audio", ignoreCase = true)
+
+                val isSystemLabel = text in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment", "Ad", "Sponsored", "More", "Suggested for you") ||
+                        text.startsWith("Like number", ignoreCase = true) ||
+                        text.startsWith("Comment number", ignoreCase = true) ||
+                        text.startsWith("Reshare number", ignoreCase = true) ||
+                        text.startsWith("Re-share number", ignoreCase = true) ||
+                        text.startsWith("Share number", ignoreCase = true) ||
+                        text.startsWith("See translation", ignoreCase = true) ||
+                        text.startsWith("Liked by", ignoreCase = true) ||
+                        text.contains("posts tagged", ignoreCase = true) ||
+                        text.contains("and others", ignoreCase = true) ||
+                        text.contains("and 1 other", ignoreCase = true) ||
+                        text.matches(Regex(".*and \\d+ others?.*", RegexOption.IGNORE_CASE)) ||
+                        text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' || it == ' ' }
+
+                if (isAudioText && detectedAudio.isEmpty()) {
                     detectedAudio = text.take(60)
-                } else if (text !in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment", "Ad", "Sponsored", "More") &&
-                    !text.startsWith("Like number", ignoreCase = true) &&
-                    !text.startsWith("Comment number", ignoreCase = true) &&
-                    !text.startsWith("See translation", ignoreCase = true) &&
-                    !text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' }
-                ) {
+                } else if (!isSystemLabel) {
                     if (text.length > 20 && detectedCaption.isEmpty()) {
                         detectedCaption = text.take(140)
-                    } else if (text.length < 80) {
-                        candidateTexts.add(text)
+                    } else if (text.length in 3..35 && !text.contains(" ") && candidateTexts.isEmpty()) {
+                        // Only add single-word tokens (like potential username @handles)
+                        candidateTexts.add(text.removePrefix("@"))
                     }
                 }
             }
