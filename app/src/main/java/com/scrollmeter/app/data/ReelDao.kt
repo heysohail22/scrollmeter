@@ -27,8 +27,11 @@ interface ReelDao {
     @Query("SELECT COUNT(*) FROM reel_records")
     fun observeTotalCount(): Flow<Int>
 
-    @Query("SELECT dateString as date, COUNT(*) as count, COALESCE(SUM(dwellTimeMs), 0) as totalDurationMs FROM reel_records GROUP BY dateString ORDER BY dateString DESC LIMIT 7")
+    @Query("SELECT dateString as date, COUNT(*) as count, COALESCE(SUM(dwellTimeMs), 0) as totalDurationMs FROM reel_records GROUP BY dateString ORDER BY dateString DESC LIMIT 14")
     fun observeDailyStats(): Flow<List<DayStat>>
+
+    @Query("SELECT * FROM reel_records WHERE dateString = :dateString ORDER BY timestamp DESC")
+    fun observeReelsForDate(dateString: String): Flow<List<ReelRecord>>
 
     @Query("SELECT * FROM reel_records ORDER BY timestamp DESC LIMIT 25")
     fun observeRecentReels(): Flow<List<ReelRecord>>
