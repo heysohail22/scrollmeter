@@ -31,6 +31,8 @@ class NotchOverlayManager(private val context: Context) {
         const val PREF_KEY_NOTCH_OVERLAY = "pref_notch_overlay_enabled"
         const val PREFS_NAME = "scrollmeter_settings"
 
+        private const val DEFAULT_OVERLAY_ALPHA = 0.72f // Translucent, non-distracting
+
         fun isOverlayEnabled(context: Context): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return prefs.getBoolean(PREF_KEY_NOTCH_OVERLAY, true)
@@ -104,8 +106,8 @@ class NotchOverlayManager(private val context: Context) {
                 overlayView?.alpha = 0f
                 overlayView?.visibility = View.VISIBLE
                 overlayView?.animate()
-                    ?.alpha(1f)
-                    ?.setDuration(180)
+                    ?.alpha(DEFAULT_OVERLAY_ALPHA)
+                    ?.setDuration(200)
                     ?.start()
             }
         }
@@ -189,17 +191,18 @@ class NotchOverlayManager(private val context: Context) {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE // Initially GONE until first genuine show
-            setPadding(dpToPx(13f), dpToPx(6f), dpToPx(13f), dpToPx(6f))
+            alpha = DEFAULT_OVERLAY_ALPHA
+            setPadding(dpToPx(11f), dpToPx(4.5f), dpToPx(11f), dpToPx(4.5f))
 
-            // Premium Dark Pill Background with Glowing Purple Border
+            // Sleek Translucent Glass Pill Background with subtle border
             val bg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dpToPx(24f).toFloat()
-                setColor(Color.parseColor("#0C0F1D")) // Deep sleek navy background
-                setStroke(dpToPx(1.3f), Color.parseColor("#8B3DFF")) // Purple glowing border
+                cornerRadius = dpToPx(20f).toFloat()
+                setColor(Color.parseColor("#B80A0D18")) // Translucent dark glass (approx 72% opacity)
+                setStroke(dpToPx(1f), Color.parseColor("#448B3DFF")) // Soft, subtle accent border
             }
             background = bg
-            elevation = dpToPx(8f).toFloat()
+            elevation = dpToPx(2f).toFloat() // Soft minimal elevation, no harsh shadow
 
             // Tap to open ScrollMeter App
             setOnClickListener {
@@ -212,15 +215,15 @@ class NotchOverlayManager(private val context: Context) {
             }
         }
 
-        // Active Status Dot (Green)
+        // Active Status Dot (Green, slightly softer)
         val dot = View(context).apply {
             val dotBg = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#19E68C"))
+                setColor(Color.parseColor("#34D399")) // Softer emerald green
             }
             background = dotBg
-            val lp = LinearLayout.LayoutParams(dpToPx(6f), dpToPx(6f)).apply {
-                marginEnd = dpToPx(7f)
+            val lp = LinearLayout.LayoutParams(dpToPx(5f), dpToPx(5f)).apply {
+                marginEnd = dpToPx(6f)
             }
             layoutParams = lp
         }
@@ -228,8 +231,8 @@ class NotchOverlayManager(private val context: Context) {
 
         // Live Watch Time
         timeTextView = TextView(context).apply {
-            setTextColor(Color.parseColor("#F8FAFC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(Color.parseColor("#E2E8F0"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             text = "0s"
         }
@@ -237,16 +240,16 @@ class NotchOverlayManager(private val context: Context) {
 
         // Bullet divider
         val bullet = TextView(context).apply {
-            text = "  •  "
-            setTextColor(Color.parseColor("#737C96"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            text = " • "
+            setTextColor(Color.parseColor("#64748B"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
         }
         root.addView(bullet)
 
         // Reel Count
         countTextView = TextView(context).apply {
-            setTextColor(Color.parseColor("#A855F7"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(Color.parseColor("#C084FC"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             text = "0 reels"
         }
