@@ -25,6 +25,7 @@ class InstagramAccessibilityService : AccessibilityService() {
     private var dwellJob: Job? = null
     private var liveTickerJob: Job? = null
     private lateinit var database: AppDatabase
+    private lateinit var notchOverlayManager: NotchOverlayManager
 
     // Session tracking
     private var currentSessionId: Long = 0L
@@ -64,6 +65,7 @@ class InstagramAccessibilityService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         database = AppDatabase.getInstance(applicationContext)
+        notchOverlayManager = NotchOverlayManager(this)
     }
 
     override fun onServiceConnected() {
@@ -93,6 +95,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         closeCurrentSessionIfActive()
         liveTickerJob?.cancel()
         dwellJob?.cancel()
+        notchOverlayManager.destroy()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
     }
@@ -106,6 +109,7 @@ class InstagramAccessibilityService : AccessibilityService() {
             liveTickerJob?.cancel()
             dwellJob?.cancel()
             activeCreator = ""
+            notchOverlayManager.hide()
             return
         }
 
@@ -225,6 +229,7 @@ class InstagramAccessibilityService : AccessibilityService() {
             liveTickerJob?.cancel()
             dwellJob?.cancel()
             activeCreator = ""
+            notchOverlayManager.hide()
             return
         }
 
@@ -335,16 +340,29 @@ class InstagramAccessibilityService : AccessibilityService() {
         liveTickerJob?.cancel()
         liveTickerJob = serviceScope.launch {
             while (isActive) {
-                delay(1000L)
                 val now = System.currentTimeMillis()
                 val elapsedMs = (now - startTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
                 
+                var sessionDuration = 0L
+                var sessionReels = 1
+
                 withContext(Dispatchers.IO) {
                     try {
                         database.reelDao().updateDwellTime(recordId, elapsedMs)
                         database.reelDao().refreshSessionStats(sessionId, now)
+                        val sess = database.reelDao().getSessionById(sessionId)
+                        if (sess != null) {
+                            sessionDuration = sess.totalDurationMs
+                            sessionReels = sess.totalReels
+                        }
                     } catch (_: Exception) {}
                 }
+
+                withContext(Dispatchers.Main) {
+                    notchOverlayManager.showOrUpdate(sessionDuration, sessionReels)
+                }
+
+                delay(1000L)
             }
         }
     }
@@ -420,6 +438,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         closeCurrentSessionIfActive()
         liveTickerJob?.cancel()
         dwellJob?.cancel()
+        notchOverlayManager.hide()
         Log.w(TAG, "ScrollMeter Accessibility Service Interrupted")
     }
 }

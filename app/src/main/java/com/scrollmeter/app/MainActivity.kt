@@ -142,6 +142,10 @@ fun ScrollMeterAppRoot() {
         selectedSessionId = null
     }
 
+    var isNotchEnabled by remember {
+        mutableStateOf(NotchOverlayManager.isOverlayEnabled(context))
+    }
+
     val coroutineScope = rememberCoroutineScope()
     var showClearDialog by remember { mutableStateOf(false) }
 
@@ -230,6 +234,11 @@ fun ScrollMeterAppRoot() {
                         displayDate = displayDate,
                         displayMonth = displayMonth,
                         isServiceActive = isAccessibilityEnabled,
+                        isNotchEnabled = isNotchEnabled,
+                        onToggleNotch = {
+                            NotchOverlayManager.setOverlayEnabled(context, it)
+                            isNotchEnabled = it
+                        },
                         onServiceCardClick = {
                             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         },
@@ -277,6 +286,8 @@ fun HomeScreen(
     displayDate: String,
     displayMonth: String,
     isServiceActive: Boolean,
+    isNotchEnabled: Boolean,
+    onToggleNotch: (Boolean) -> Unit,
     onServiceCardClick: () -> Unit,
     onViewAllClick: () -> Unit,
     onClearClick: () -> Unit
@@ -302,6 +313,14 @@ fun HomeScreen(
             ServiceStatusCard(
                 isActive = isServiceActive,
                 onClick = onServiceCardClick
+            )
+        }
+
+        // 1.5 Floating Notch Pill Toggle Card
+        item {
+            NotchOverlayToggleCard(
+                isEnabled = isNotchEnabled,
+                onToggle = onToggleNotch
             )
         }
 
@@ -951,6 +970,76 @@ fun ServiceStatusCard(
                 contentDescription = null,
                 tint = ScrollMeterColors.MutedText,
                 modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+// ==========================================
+// 1.5 NOTCH OVERLAY TOGGLE CARD
+// ==========================================
+@Composable
+fun NotchOverlayToggleCard(
+    isEnabled: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = ScrollMeterColors.CardBackground,
+        border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ScrollMeterColors.PurpleDarkTrack),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.AvTimer,
+                        contentDescription = null,
+                        tint = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Floating Notch Pill",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ScrollMeterColors.PrimaryText
+                    )
+                    Text(
+                        text = "Live overlay below camera notch while scrolling",
+                        fontSize = 12.sp,
+                        color = ScrollMeterColors.SecondaryText
+                    )
+                }
+            }
+
+            Switch(
+                checked = isEnabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = ScrollMeterColors.PrimaryText,
+                    checkedTrackColor = ScrollMeterColors.Purple,
+                    uncheckedThumbColor = ScrollMeterColors.MutedText,
+                    uncheckedTrackColor = ScrollMeterColors.ElevatedCard
+                )
             )
         }
     }
