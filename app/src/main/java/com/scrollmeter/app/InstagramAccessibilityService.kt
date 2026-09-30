@@ -219,7 +219,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 isReelsSurface = true
             }
 
-            // 3. Extract Creator from "Reel by <author>" content description (Canonical Instagram format)
+            // 3. Extract Creator & Audio from "Reel by <author>" content description (Canonical Instagram format)
             if (desc.isNotEmpty()) {
                 if (desc.startsWith("Reel by ", ignoreCase = true)) {
                     isReelsSurface = true
@@ -228,11 +228,22 @@ class InstagramAccessibilityService : AccessibilityService() {
                     if (isValidUsername(creator)) {
                         detectedCreator = creator
                     }
+                    // Extract song name if included in the Reel description (e.g. "Reel by author • Song Title")
+                    if (raw.contains("•")) {
+                        val audioPart = raw.substringAfter("•").substringBefore(".").substringBefore(",").trim()
+                        if (audioPart.isNotEmpty() && !SYSTEM_BLACKLIST.contains(audioPart.lowercase())) {
+                            detectedAudio = audioPart.take(80)
+                        }
+                    }
+                    Log.i(TAG, "Found ReelDesc: creator='$creator', audio='$detectedAudio', raw='$raw'")
                 } else if (desc.contains("Original audio", ignoreCase = true) ||
-                    (desc.contains("audio", ignoreCase = true) && desc.length > 8 && !desc.equals("Audio", ignoreCase = true))
+                    desc.startsWith("Audio:", ignoreCase = true) ||
+                    (desc.contains("audio", ignoreCase = true) && desc.length > 5 && !desc.equals("Audio", ignoreCase = true))
                 ) {
-                    if (detectedAudio.isEmpty()) {
-                        detectedAudio = desc.take(60)
+                    val cleanAudio = desc.removePrefix("Audio:").removePrefix("audio:").trim()
+                    if (cleanAudio.isNotEmpty() && !SYSTEM_BLACKLIST.contains(cleanAudio.lowercase())) {
+                        detectedAudio = cleanAudio.take(80)
+                        Log.i(TAG, "Found AudioDesc: '$cleanAudio'")
                     }
                 }
             }
@@ -251,9 +262,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
             // 5. Extract caption & audio text & candidate usernames (only outside sheets/menus)
             if (text.isNotEmpty() && !isModalOrSheetOpen) {
-                val isAudioText = text.contains("Original audio", ignoreCase = true) ||
-                        text.contains(" · ", ignoreCase = true) && text.contains("audio", ignoreCase = true)
-
                 val isSystemLabel = SYSTEM_BLACKLIST.contains(text.lowercase()) ||
                         text.startsWith("Like number", ignoreCase = true) ||
                         text.startsWith("Comment number", ignoreCase = true) ||
@@ -268,10 +276,23 @@ class InstagramAccessibilityService : AccessibilityService() {
                         text.matches(Regex(".*and \\d+ others?.*", RegexOption.IGNORE_CASE)) ||
                         text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' || it == ' ' }
 
+                val isMusicView = viewId.contains("music", ignoreCase = true) ||
+                        viewId.contains("audio", ignoreCase = true)
+
+                val isAudioText = isMusicView ||
+                        text.contains("Original audio", ignoreCase = true) ||
+                        (text.contains(" · ") && text.length in 4..80 && !isSystemLabel)
+
                 if (isAudioText && detectedAudio.isEmpty()) {
-                    detectedAudio = text.take(60)
+                    val cleanAudio = text.trim()
+                    if (cleanAudio.isNotEmpty() && !SYSTEM_BLACKLIST.contains(cleanAudio.lowercase())) {
+                        detectedAudio = cleanAudio.take(80)
+                        Log.i(TAG, "Found AudioTrack text: '$detectedAudio' from viewId='$viewId'")
+                    }
                 } else if (!isSystemLabel && !viewId.contains("comment", ignoreCase = true)) {
-                    if (text.length > 20 && detectedCaption.isEmpty()) {
+                    if (viewId.contains("caption", ignoreCase = true)) {
+                        detectedCaption = text.take(160)
+                    } else if (text.length > 20 && detectedCaption.isEmpty() && text != detectedAudio) {
                         detectedCaption = text.take(140)
                     } else if (text.length in 2..30 && detectedCreator.isEmpty() && candidateTexts.isEmpty()) {
                         val candidate = text.removePrefix("@").trim()
