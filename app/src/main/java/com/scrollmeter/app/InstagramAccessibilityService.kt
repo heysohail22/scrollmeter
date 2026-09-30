@@ -57,6 +57,21 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         private const val SCAN_THROTTLE_MS = 150L
 
+        private val USERNAME_REGEX = Regex("^[a-zA-Z0-9._]{2,30}$")
+
+        // Blacklist common UI buttons, actions, and system labels that must NEVER be treated as creators
+        private val SYSTEM_BLACKLIST = setOf(
+            "playback", "play", "pause", "liked", "like", "unlike",
+            "comment", "comments", "share", "shares", "reshare", "remix",
+            "audio", "original", "follow", "following", "more", "suggested",
+            "sponsored", "ad", "watch", "reply", "replies", "report",
+            "hide", "save", "saved", "translate", "translation", "send",
+            "direct", "verified", "back", "done", "close", "reels", "reel",
+            "feed", "search", "explore", "activity", "profile", "post", "posts",
+            "threads", "meta", "shop", "tag", "tagged", "tagged products",
+            "view", "views", "insights", "boost", "boost post", "home", "notifications"
+        )
+
         fun getTodayDateString(): String {
             return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         }
@@ -152,39 +167,45 @@ class InstagramAccessibilityService : AccessibilityService() {
         var detectedAudio = ""
         var detectedCaption = ""
         var isReelsSurface = false
-        val candidateTexts = mutableListOf<String>()
+        var isCommentSheetOpen = false
 
         var scannedNodes = 0
-        val maxNodesToScan = 350
+        val maxNodesToScan = 300
 
         fun scan(node: AccessibilityNodeInfo?) {
             if (node == null || scannedNodes >= maxNodesToScan) return
             scannedNodes++
 
-            val desc = node.contentDescription?.toString()?.trim()
-            val text = node.text?.toString()?.trim()
+            val desc = node.contentDescription?.toString()?.trim() ?: ""
+            val text = node.text?.toString()?.trim() ?: ""
             val viewId = node.viewIdResourceName ?: ""
 
-            // Detect Reels viewer surface
+            // 1. Detect if Comment sheet is open (never count commenters as reel creators!)
+            if (viewId.contains("comment") ||
+                text.equals("Comments", ignoreCase = true) ||
+                text.startsWith("Add a comment", ignoreCase = true) ||
+                text.startsWith("Comment as", ignoreCase = true) ||
+                desc.equals("Comments", ignoreCase = true) ||
+                desc.startsWith("Comments sheet", ignoreCase = true)
+            ) {
+                isCommentSheetOpen = true
+            }
+
+            // 2. Detect Reels viewer surface
             if (viewId.contains("clips", ignoreCase = true) ||
                 viewId.contains("reel", ignoreCase = true) ||
-                desc?.startsWith("Reel by", ignoreCase = true) == true
+                desc.startsWith("Reel by", ignoreCase = true)
             ) {
                 isReelsSurface = true
             }
 
-            // Extract Creator & Audio from content descriptions
-            if (!desc.isNullOrEmpty()) {
+            // 3. Extract Creator from "Reel by <author>" content description (Canonical Instagram format)
+            if (desc.isNotEmpty()) {
                 if (desc.startsWith("Reel by ", ignoreCase = true)) {
                     isReelsSurface = true
                     val raw = desc.removePrefix("Reel by ").removePrefix("reel by ")
-                    val creator = raw.substringBefore(".").trim()
-                    if (creator.isNotEmpty()) {
-                        detectedCreator = creator
-                    }
-                } else if (desc.startsWith("Profile picture of ", ignoreCase = true)) {
-                    val creator = desc.removePrefix("Profile picture of ").trim()
-                    if (creator.isNotEmpty() && detectedCreator.isEmpty()) {
+                    val creator = raw.substringBefore("•").substringBefore(".").substringBefore(",").trim()
+                    if (isValidUsername(creator)) {
                         detectedCreator = creator
                     }
                 } else if (desc.contains("Original audio", ignoreCase = true) ||
@@ -196,12 +217,24 @@ class InstagramAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Extract caption & audio text
-            if (!text.isNullOrEmpty()) {
+            // 4. Extract Creator from explicit author View IDs (fallback only if desc did not have "Reel by")
+            if (detectedCreator.isEmpty() && !viewId.contains("comment")) {
+                if (viewId.contains("clips_author") || viewId.contains("clips_creator") ||
+                    (viewId.contains("profile_name") && !viewId.contains("comment"))
+                ) {
+                    val cleanText = text.removePrefix("@").trim()
+                    if (isValidUsername(cleanText)) {
+                        detectedCreator = cleanText
+                    }
+                }
+            }
+
+            // 5. Extract caption & audio text
+            if (text.isNotEmpty()) {
                 val isAudioText = text.contains("Original audio", ignoreCase = true) ||
                         text.contains(" · ", ignoreCase = true) && text.contains("audio", ignoreCase = true)
 
-                val isSystemLabel = text in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment", "Ad", "Sponsored", "More", "Suggested for you") ||
+                val isSystemLabel = SYSTEM_BLACKLIST.contains(text.lowercase()) ||
                         text.startsWith("Like number", ignoreCase = true) ||
                         text.startsWith("Comment number", ignoreCase = true) ||
                         text.startsWith("Reshare number", ignoreCase = true) ||
@@ -217,12 +250,9 @@ class InstagramAccessibilityService : AccessibilityService() {
 
                 if (isAudioText && detectedAudio.isEmpty()) {
                     detectedAudio = text.take(60)
-                } else if (!isSystemLabel) {
+                } else if (!isSystemLabel && !viewId.contains("comment")) {
                     if (text.length > 20 && detectedCaption.isEmpty()) {
                         detectedCaption = text.take(140)
-                    } else if (text.length in 3..35 && !text.contains(" ") && candidateTexts.isEmpty()) {
-                        // Only add single-word tokens (like potential username @handles)
-                        candidateTexts.add(text.removePrefix("@"))
                     }
                 }
             }
@@ -234,14 +264,15 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
-
-
-        val pageName = when {
-            detectedCreator.isNotEmpty() -> detectedCreator
-            candidateTexts.isNotEmpty() -> candidateTexts.first()
-            else -> ""
+        // If the comment sheet is currently open, user is interacting with comments of the active reel
+        if (isCommentSheetOpen) {
+            if (activeCreator.isNotBlank()) {
+                lastReelActivityTimestamp = currentTime
+            }
+            return
         }
 
+        val pageName = detectedCreator
         if (pageName.isBlank()) return
 
         // 1. Check if this is the SAME Reel currently playing
@@ -270,6 +301,12 @@ class InstagramAccessibilityService : AccessibilityService() {
             caption = detectedCaption,
             transitionTime = currentTime
         )
+    }
+
+    private fun isValidUsername(name: String): Boolean {
+        if (name.length !in 2..30) return false
+        if (SYSTEM_BLACKLIST.contains(name.lowercase())) return false
+        return USERNAME_REGEX.matches(name)
     }
 
     private fun handleReelTransition(
