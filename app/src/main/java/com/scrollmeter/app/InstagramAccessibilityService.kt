@@ -24,12 +24,12 @@ class InstagramAccessibilityService : AccessibilityService() {
         private const val TAG = "ScrollMeterService"
         private const val INSTAGRAM_PKG = "com.instagram.android"
         
-        // Minimum time (in milliseconds) a Reel must be viewed to count as a real view
-        // Fast swipes (< 1200ms) will be ignored as skipped/doomscroll flickers.
-        const val MIN_DWELL_TIME_MS = 1200L
+        // 1.0s dwell threshold: fast flickers/swipes (< 1000ms) are skipped,
+        // watching a reel for >= 1s counts as a verified view.
+        const val MIN_DWELL_TIME_MS = 1000L
         
-        // Throttle node inspection to avoid CPU overhead
-        private const val SCAN_THROTTLE_MS = 200L
+        // Throttle full scans to avoid high CPU usage
+        private const val SCAN_THROTTLE_MS = 150L
     }
 
     override fun onServiceConnected() {
@@ -42,13 +42,13 @@ class InstagramAccessibilityService : AccessibilityService() {
             info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            info.notificationTimeout = 100
+            info.notificationTimeout = 80
             serviceInfo = info
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring serviceInfo", e)
         }
 
-        Log.d(TAG, "ScrollMeter Accessibility Service Connected")
+        Log.i(TAG, "ScrollMeter Accessibility Service Connected")
         ReelTrackerState.setServiceRunning(true)
         ReelTrackerState.updateStatus("Accessibility Service active and monitoring Instagram")
     }
@@ -65,7 +65,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val pkg = event.packageName?.toString() ?: ""
         if (pkg != INSTAGRAM_PKG) {
-            // Left Instagram: cancel any unverified dwell job
             if (activeFingerprint.isNotEmpty() && !isCurrentReelCounted) {
                 dwellJob?.cancel()
                 activeFingerprint = ""
@@ -81,108 +80,100 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val rootNode = rootInActiveWindow ?: return
         try {
-            inspectInstagramTree(rootNode, currentTime)
+            inspectInstagramTree(rootNode)
         } catch (e: Exception) {
             Log.e(TAG, "Error inspecting node tree", e)
         }
     }
 
-    private fun inspectInstagramTree(root: AccessibilityNodeInfo, eventTime: Long) {
-        // Collect visible text elements and identifiable anchors
-        val texts = mutableListOf<String>()
-        var hasReelsIndicators = false
+    private fun inspectInstagramTree(root: AccessibilityNodeInfo) {
+        var detectedCreator = ""
+        var detectedAudioOrCaption = ""
+        val candidateTexts = mutableListOf<String>()
 
-        traverseNodes(root, depth = 0, maxDepth = 25) { node ->
-            val text = node.text?.toString()?.trim()
+        var scannedNodes = 0
+        val maxNodesToScan = 350
+
+        // Traverse the tree to extract Reel identifiers
+        fun scan(node: AccessibilityNodeInfo?) {
+            if (node == null || scannedNodes >= maxNodesToScan) return
+            scannedNodes++
+
             val desc = node.contentDescription?.toString()?.trim()
-            val viewId = node.viewIdResourceName ?: ""
+            val text = node.text?.toString()?.trim()
 
-            if (!text.isNullOrEmpty() && text.length < 100) {
-                texts.add(text)
+            // 1. High-accuracy check: Instagram video container description
+            // Example: "Reel by querysurge. Double tap to play or pause."
+            if (!desc.isNullOrEmpty()) {
+                if (desc.startsWith("Reel by ", ignoreCase = true)) {
+                    val raw = desc.removePrefix("Reel by ").removePrefix("reel by ")
+                    val creator = raw.substringBefore(".").trim()
+                    if (creator.isNotEmpty()) {
+                        detectedCreator = creator
+                    }
+                } else if (desc.startsWith("Profile picture of ", ignoreCase = true)) {
+                    val creator = desc.removePrefix("Profile picture of ").trim()
+                    if (creator.isNotEmpty() && detectedCreator.isEmpty()) {
+                        detectedCreator = creator
+                    }
+                } else if (desc.contains("Original audio", ignoreCase = true) || desc.contains("Audio", ignoreCase = true)) {
+                    detectedAudioOrCaption = desc.take(40)
+                }
             }
 
-            // Detect indicators that user is on a Reels surface
-            if (viewId.contains("clips", ignoreCase = true) ||
-                viewId.contains("reel", ignoreCase = true) ||
-                desc?.contains("like", ignoreCase = true) == true ||
-                desc?.contains("comment", ignoreCase = true) == true ||
-                desc?.contains("share", ignoreCase = true) == true ||
-                desc?.contains("audio", ignoreCase = true) == true ||
-                text?.contains("Original audio", ignoreCase = true) == true ||
-                text?.equals("Follow", ignoreCase = true) == true ||
-                text?.equals("Reels", ignoreCase = true) == true
-            ) {
-                hasReelsIndicators = true
+            // 2. Collect visible texts for fallback identification
+            if (!text.isNullOrEmpty() && text.length < 80) {
+                if (text !in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment", "Ad", "Sponsored") &&
+                    !text.startsWith("Like number", ignoreCase = true) &&
+                    !text.startsWith("Comment number", ignoreCase = true) &&
+                    !text.startsWith("See translation", ignoreCase = true) &&
+                    !text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' }
+                ) {
+                    candidateTexts.add(text)
+                }
+            }
+
+            for (i in 0 until node.childCount) {
+                scan(node.getChild(i))
             }
         }
 
-        if (!hasReelsIndicators || texts.isEmpty()) {
-            return
+        scan(root)
+
+        // Construct stable fingerprint
+        val fingerprint = when {
+            detectedCreator.isNotEmpty() -> {
+                if (detectedAudioOrCaption.isNotEmpty()) "$detectedCreator | $detectedAudioOrCaption" else detectedCreator
+            }
+            candidateTexts.isNotEmpty() -> {
+                val first = candidateTexts.first()
+                val second = candidateTexts.getOrNull(1)?.take(30) ?: ""
+                if (second.isNotEmpty()) "$first | $second" else first
+            }
+            else -> ""
         }
 
-        // Generate a fingerprint representing the current Reel in view.
-        val candidateFingerprint = deriveReelFingerprint(texts)
+        if (fingerprint.isBlank()) return
 
-        if (candidateFingerprint.isBlank()) {
-            return
+        if (fingerprint != activeFingerprint) {
+            handleReelTransition(fingerprint)
         }
-
-        // Check if transition to a new Reel occurred
-        if (candidateFingerprint != activeFingerprint) {
-            handleReelTransition(candidateFingerprint)
-        }
-    }
-
-    private fun deriveReelFingerprint(texts: List<String>): String {
-        // Filter out generic UI labels
-        val filtered = texts.filter { item ->
-            item !in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment") &&
-            !item.startsWith("See translation", ignoreCase = true) &&
-            !item.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' }
-        }
-
-        if (filtered.isEmpty()) return ""
-
-        val primary = filtered.firstOrNull() ?: ""
-        val secondary = filtered.getOrNull(1)?.take(30) ?: ""
-        
-        return if (secondary.isNotEmpty()) "$primary | $secondary" else primary
     }
 
     private fun handleReelTransition(newFingerprint: String) {
-        Log.d(TAG, "Reel Candidate Detected: $newFingerprint")
+        Log.i(TAG, "Reel Candidate Detected: $newFingerprint")
         dwellJob?.cancel()
 
         activeFingerprint = newFingerprint
         isCurrentReelCounted = false
         ReelTrackerState.updateCurrentCandidate(newFingerprint)
 
-        // Start dwell timer. Only if the user remains on this Reel for >= MIN_DWELL_TIME_MS
-        // will it register as an actual viewed Reel.
         dwellJob = serviceScope.launch {
             delay(MIN_DWELL_TIME_MS)
             if (!isCurrentReelCounted && activeFingerprint == newFingerprint) {
                 isCurrentReelCounted = true
                 ReelTrackerState.incrementCount(newFingerprint)
-                Log.d(TAG, "Reel Counted! Fingerprint: $newFingerprint")
-            }
-        }
-    }
-
-    private fun traverseNodes(
-        node: AccessibilityNodeInfo?,
-        depth: Int,
-        maxDepth: Int,
-        onNode: (AccessibilityNodeInfo) -> Unit
-    ) {
-        if (node == null || depth > maxDepth) return
-        onNode(node)
-
-        val childCount = node.childCount
-        for (i in 0 until childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                traverseNodes(child, depth + 1, maxDepth, onNode)
+                Log.i(TAG, "Reel Counted (#${ReelTrackerState.reelCount.value}): $newFingerprint")
             }
         }
     }
