@@ -168,6 +168,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         var detectedCaption = ""
         var isReelsSurface = false
         var isCommentSheetOpen = false
+        val candidateTexts = mutableListOf<String>()
 
         var scannedNodes = 0
         val maxNodesToScan = 300
@@ -180,14 +181,19 @@ class InstagramAccessibilityService : AccessibilityService() {
             val text = node.text?.toString()?.trim() ?: ""
             val viewId = node.viewIdResourceName ?: ""
 
-            // 1. Detect if Comment sheet is open (never count commenters as reel creators!)
-            if (viewId.contains("comment") ||
+            // 1. Detect if Comment sheet is open (do NOT match the comment button on the reel!)
+            val isButton = viewId.contains("button", ignoreCase = true) ||
+                    viewId.contains("btn", ignoreCase = true)
+            if (!isButton && (
+                viewId.contains("comment_composer", ignoreCase = true) ||
+                viewId.contains("comments_recycler", ignoreCase = true) ||
+                viewId.contains("layout_comment_thread", ignoreCase = true) ||
+                viewId.contains("comment_sheet", ignoreCase = true) ||
                 text.equals("Comments", ignoreCase = true) ||
                 text.startsWith("Add a comment", ignoreCase = true) ||
                 text.startsWith("Comment as", ignoreCase = true) ||
-                desc.equals("Comments", ignoreCase = true) ||
-                desc.startsWith("Comments sheet", ignoreCase = true)
-            ) {
+                desc.equals("Comments sheet", ignoreCase = true)
+            )) {
                 isCommentSheetOpen = true
             }
 
@@ -218,9 +224,9 @@ class InstagramAccessibilityService : AccessibilityService() {
             }
 
             // 4. Extract Creator from explicit author View IDs (fallback only if desc did not have "Reel by")
-            if (detectedCreator.isEmpty() && !viewId.contains("comment")) {
+            if (detectedCreator.isEmpty() && !viewId.contains("comment", ignoreCase = true)) {
                 if (viewId.contains("clips_author") || viewId.contains("clips_creator") ||
-                    (viewId.contains("profile_name") && !viewId.contains("comment"))
+                    (viewId.contains("profile_name") && !viewId.contains("comment", ignoreCase = true))
                 ) {
                     val cleanText = text.removePrefix("@").trim()
                     if (isValidUsername(cleanText)) {
@@ -229,7 +235,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 5. Extract caption & audio text
+            // 5. Extract caption & audio text & candidate usernames
             if (text.isNotEmpty()) {
                 val isAudioText = text.contains("Original audio", ignoreCase = true) ||
                         text.contains(" · ", ignoreCase = true) && text.contains("audio", ignoreCase = true)
@@ -250,9 +256,14 @@ class InstagramAccessibilityService : AccessibilityService() {
 
                 if (isAudioText && detectedAudio.isEmpty()) {
                     detectedAudio = text.take(60)
-                } else if (!isSystemLabel && !viewId.contains("comment")) {
+                } else if (!isSystemLabel && !viewId.contains("comment", ignoreCase = true)) {
                     if (text.length > 20 && detectedCaption.isEmpty()) {
                         detectedCaption = text.take(140)
+                    } else if (text.length in 2..30 && detectedCreator.isEmpty() && candidateTexts.isEmpty()) {
+                        val candidate = text.removePrefix("@").trim()
+                        if (isValidUsername(candidate)) {
+                            candidateTexts.add(candidate)
+                        }
                     }
                 }
             }
@@ -272,7 +283,12 @@ class InstagramAccessibilityService : AccessibilityService() {
             return
         }
 
-        val pageName = detectedCreator
+        val pageName = when {
+            detectedCreator.isNotEmpty() -> detectedCreator
+            candidateTexts.isNotEmpty() -> candidateTexts.first()
+            else -> ""
+        }
+
         if (pageName.isBlank()) return
 
         // 1. Check if this is the SAME Reel currently playing
@@ -293,6 +309,8 @@ class InstagramAccessibilityService : AccessibilityService() {
             }
             return
         }
+
+        Log.i(TAG, "New Reel candidate: $pageName (previous: $activeCreator)")
 
         // 2. Different Reel detected -> Handle transition
         handleReelTransition(
