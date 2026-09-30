@@ -69,7 +69,10 @@ class InstagramAccessibilityService : AccessibilityService() {
             "direct", "verified", "back", "done", "close", "reels", "reel",
             "feed", "search", "explore", "activity", "profile", "post", "posts",
             "threads", "meta", "shop", "tag", "tagged", "tagged products",
-            "view", "views", "insights", "boost", "boost post", "home", "notifications"
+            "view", "views", "insights", "boost", "boost post", "home", "notifications",
+            "interested", "about", "account", "manage", "link", "copy", "menu",
+            "options", "transparency", "details", "control", "controls", "why",
+            "sequence", "unfollow", "mute", "block", "restrict", "info", "settings", "not"
         )
 
         fun getTodayDateString(): String {
@@ -167,7 +170,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         var detectedAudio = ""
         var detectedCaption = ""
         var isReelsSurface = false
-        var isCommentSheetOpen = false
+        var isModalOrSheetOpen = false
         val candidateTexts = mutableListOf<String>()
 
         var scannedNodes = 0
@@ -181,7 +184,7 @@ class InstagramAccessibilityService : AccessibilityService() {
             val text = node.text?.toString()?.trim() ?: ""
             val viewId = node.viewIdResourceName ?: ""
 
-            // 1. Detect if Comment sheet is open (do NOT match the comment button on the reel!)
+            // 1. Detect if Comment sheet, 3-dots menu, or "About this reel" modal is open
             val isButton = viewId.contains("button", ignoreCase = true) ||
                     viewId.contains("btn", ignoreCase = true)
             if (!isButton && (
@@ -189,12 +192,23 @@ class InstagramAccessibilityService : AccessibilityService() {
                 viewId.contains("comments_recycler", ignoreCase = true) ||
                 viewId.contains("layout_comment_thread", ignoreCase = true) ||
                 viewId.contains("comment_sheet", ignoreCase = true) ||
+                viewId.contains("bottom_sheet", ignoreCase = true) ||
+                viewId.contains("action_sheet", ignoreCase = true) ||
                 text.equals("Comments", ignoreCase = true) ||
                 text.startsWith("Add a comment", ignoreCase = true) ||
                 text.startsWith("Comment as", ignoreCase = true) ||
-                desc.equals("Comments sheet", ignoreCase = true)
+                desc.equals("Comments sheet", ignoreCase = true) ||
+                text.contains("About this reel", ignoreCase = true) ||
+                text.contains("About this account", ignoreCase = true) ||
+                text.contains("Why you're seeing this", ignoreCase = true) ||
+                text.contains("Not interested", ignoreCase = true) ||
+                text.contains("Manage interested", ignoreCase = true) ||
+                text.equals("Interested", ignoreCase = true) ||
+                text.equals("Report", ignoreCase = true) ||
+                text.equals("Copy link", ignoreCase = true) ||
+                text.equals("Share to...", ignoreCase = true)
             )) {
-                isCommentSheetOpen = true
+                isModalOrSheetOpen = true
             }
 
             // 2. Detect Reels viewer surface
@@ -235,8 +249,8 @@ class InstagramAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 5. Extract caption & audio text & candidate usernames
-            if (text.isNotEmpty()) {
+            // 5. Extract caption & audio text & candidate usernames (only outside sheets/menus)
+            if (text.isNotEmpty() && !isModalOrSheetOpen) {
                 val isAudioText = text.contains("Original audio", ignoreCase = true) ||
                         text.contains(" · ", ignoreCase = true) && text.contains("audio", ignoreCase = true)
 
@@ -275,8 +289,8 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
-        // If the comment sheet is currently open, user is interacting with comments of the active reel
-        if (isCommentSheetOpen) {
+        // If comment sheet or modal menu ("About this reel", etc.) is open, user is still on active reel
+        if (isModalOrSheetOpen) {
             if (activeCreator.isNotBlank()) {
                 lastReelActivityTimestamp = currentTime
             }
