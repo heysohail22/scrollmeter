@@ -244,8 +244,8 @@ class InstagramAccessibilityService : AccessibilityService() {
                         detectedAudio = cleanAudio.take(80)
                         Log.i(TAG, "Captured AudioTrack from desc: '$detectedAudio'")
                     }
-                } else if (detectedCaption.isEmpty() && (desc.startsWith("#") || (desc.length > 15 && !desc.contains("Double tap") && !desc.contains("View likes") && !desc.contains("View comments") && !desc.startsWith("Follow") && desc != detectedAudio))) {
-                    detectedCaption = desc.take(160)
+                } else if (detectedCaption.isEmpty() && isCaptionForCurrentReel(desc, detectedCreator) && desc != detectedAudio) {
+                    detectedCaption = cleanCaptionText(desc, detectedCreator)
                 }
             }
 
@@ -292,9 +292,13 @@ class InstagramAccessibilityService : AccessibilityService() {
                     }
                 } else if (!isSystemLabel && !viewId.contains("comment", ignoreCase = true)) {
                     if (viewId.contains("caption", ignoreCase = true)) {
-                        detectedCaption = text.take(160)
-                    } else if (text.length > 20 && detectedCaption.isEmpty() && text != detectedAudio) {
-                        detectedCaption = text.take(140)
+                        if (isCaptionForCurrentReel(text, detectedCreator)) {
+                            detectedCaption = cleanCaptionText(text, detectedCreator)
+                        }
+                    } else if (text.length > 15 && detectedCaption.isEmpty() && text != detectedAudio) {
+                        if (isCaptionForCurrentReel(text, detectedCreator)) {
+                            detectedCaption = cleanCaptionText(text, detectedCreator)
+                        }
                     } else if (text.length in 2..30 && detectedCreator.isEmpty() && candidateTexts.isEmpty()) {
                         val candidate = text.removePrefix("@").trim()
                         if (isValidUsername(candidate)) {
@@ -361,6 +365,33 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (name.length !in 2..30) return false
         if (SYSTEM_BLACKLIST.contains(name.lowercase())) return false
         return USERNAME_REGEX.matches(name)
+    }
+
+    private fun isCaptionForCurrentReel(candidate: String, creator: String): Boolean {
+        val trimmed = candidate.trim()
+        if (trimmed.length < 3) return false
+        if (trimmed.contains("posted a video", ignoreCase = true)) return false
+        if (trimmed.contains("Double tap", ignoreCase = true)) return false
+        if (trimmed.contains("View likes", ignoreCase = true)) return false
+        if (trimmed.contains("View comments", ignoreCase = true)) return false
+        if (trimmed.startsWith("Follow", ignoreCase = true)) return false
+        if (SYSTEM_BLACKLIST.contains(trimmed.lowercase())) return false
+        if (creator.isNotEmpty()) {
+            val firstWord = trimmed.substringBefore(" ").substringBefore("\n").trim().removePrefix("@")
+            // If the caption begins with a different creator handle, it's from an off-screen cached page!
+            if (isValidUsername(firstWord) && !firstWord.equals(creator, ignoreCase = true)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun cleanCaptionText(raw: String, creator: String): String {
+        var c = raw.trim()
+        if (creator.isNotEmpty() && c.startsWith(creator, ignoreCase = true)) {
+            c = c.removePrefix(creator).trim()
+        }
+        return c.take(160)
     }
 
     private fun handleReelTransition(
