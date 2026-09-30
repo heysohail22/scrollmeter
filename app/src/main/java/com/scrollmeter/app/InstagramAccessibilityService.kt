@@ -375,6 +375,8 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (trimmed.contains("View likes", ignoreCase = true)) return false
         if (trimmed.contains("View comments", ignoreCase = true)) return false
         if (trimmed.startsWith("Follow", ignoreCase = true)) return false
+        if (trimmed.contains("Consistency Wins", ignoreCase = true) && !creator.equals("zeelabpharmacy", ignoreCase = true)) return false
+        if (trimmed.contains("zeelabpharmacy", ignoreCase = true) && !creator.equals("zeelabpharmacy", ignoreCase = true)) return false
         if (SYSTEM_BLACKLIST.contains(trimmed.lowercase())) return false
         if (creator.isNotEmpty()) {
             val firstWord = trimmed.substringBefore(" ").substringBefore("\n").trim().removePrefix("@")

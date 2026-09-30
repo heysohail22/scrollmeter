@@ -99,6 +99,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Tinted Status Bar & Navigation Bar seamlessly matching dark theme
+        window.statusBarColor = android.graphics.Color.parseColor("#0B0E14")
+        window.navigationBarColor = android.graphics.Color.parseColor("#0B0E14")
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false // Crisp white icons on dark tinted bar
+            isAppearanceLightNavigationBars = false
+        }
+
         setContent {
             ScrollMeterTheme {
                 ScrollMeterAppRoot()
