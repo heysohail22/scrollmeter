@@ -14,10 +14,11 @@ data class ReelRecord(
     val dateString: String, // e.g. "2026-09-30"
     val timestamp: Long,    // epoch ms
     val creator: String,
-    val dwellTimeMs: Long = 1000L
+    val dwellTimeMs: Long = 1000L // Time specifically spent watching this reel
 )
 
 data class DayStat(
     val date: String,
-    val count: Int
+    val count: Int,
+    val totalDurationMs: Long = 0L
 )

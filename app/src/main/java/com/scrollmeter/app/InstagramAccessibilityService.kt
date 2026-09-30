@@ -22,12 +22,14 @@ class InstagramAccessibilityService : AccessibilityService() {
     private var dwellJob: Job? = null
     private lateinit var database: AppDatabase
 
-    // Track active reel state
+    // Track active reel state and watch duration
     private var activeFingerprint: String = ""
     private var isCurrentReelCounted: Boolean = false
+    private var activeReelStartTime: Long = 0L
+    private var activeRecordId: Long = 0L
     private var lastScanTimestamp: Long = 0L
 
-    // Cache of recently counted reels to prevent double-counting when app switching
+    // Cache of recently counted reels to prevent double-counting
     private val recentlyCountedReels = ArrayDeque<String>(20)
 
     companion object {
@@ -37,6 +39,9 @@ class InstagramAccessibilityService : AccessibilityService() {
         // 1.0s dwell threshold: rapid swipes (< 1000ms) are skipped,
         // watching for >= 1.0s confirms an intentional Reel view.
         const val MIN_DWELL_TIME_MS = 1000L
+        
+        // Cap single Reel watch time to 120s (2 minutes) to prevent runaway time if left unattended
+        const val MAX_REEL_WATCH_CAP_MS = 120_000L
         
         private const val SCAN_THROTTLE_MS = 150L
 
@@ -73,6 +78,7 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        commitActiveReelTime()
         dwellJob?.cancel()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
@@ -83,9 +89,12 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val eventPkg = event.packageName?.toString() ?: ""
         if (eventPkg != INSTAGRAM_PKG) {
+            // User left Instagram: pause watch timer and commit watch duration for current Reel
+            commitActiveReelTime()
             if (!isCurrentReelCounted) {
                 dwellJob?.cancel()
             }
+            activeFingerprint = ""
             return
         }
 
@@ -99,16 +108,18 @@ class InstagramAccessibilityService : AccessibilityService() {
         try {
             val rootPkg = rootNode.packageName?.toString() ?: ""
             if (rootPkg != INSTAGRAM_PKG) {
+                commitActiveReelTime()
+                activeFingerprint = ""
                 return
             }
 
-            inspectInstagramTree(rootNode)
+            inspectInstagramTree(rootNode, currentTime)
         } catch (e: Exception) {
             Log.e(TAG, "Error inspecting node tree", e)
         }
     }
 
-    private fun inspectInstagramTree(root: AccessibilityNodeInfo) {
+    private fun inspectInstagramTree(root: AccessibilityNodeInfo, currentTime: Long) {
         var detectedCreator = ""
         var detectedAudioOrCaption = ""
         var isReelsSurface = false
@@ -171,7 +182,10 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
+        // If user left Reels (e.g. went to Feed or DMs), finalize active Reel time
         if (!isReelsSurface && detectedCreator.isEmpty()) {
+            commitActiveReelTime()
+            activeFingerprint = ""
             return
         }
 
@@ -186,14 +200,19 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (fingerprint.isBlank()) return
 
         if (fingerprint != activeFingerprint) {
-            handleReelTransition(fingerprint)
+            handleReelTransition(fingerprint, currentTime)
         }
     }
 
-    private fun handleReelTransition(newFingerprint: String) {
+    private fun handleReelTransition(newFingerprint: String, transitionTime: Long) {
+        // 1. Commit watch time for the previous Reel before starting the new one
+        commitActiveReelTime()
+
         dwellJob?.cancel()
 
         activeFingerprint = newFingerprint
+        activeReelStartTime = transitionTime
+        activeRecordId = 0L
         ReelTrackerState.updateCurrentCandidate(newFingerprint)
 
         if (recentlyCountedReels.contains(newFingerprint)) {
@@ -215,7 +234,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 }
                 recentlyCountedReels.addLast(newFingerprint)
 
-                // Persist confirmed Reel view into SQLite via Room
+                // Insert into Room and store the record ID to update duration later
                 val record = ReelRecord(
                     dateString = getTodayDateString(),
                     timestamp = System.currentTimeMillis(),
@@ -224,19 +243,38 @@ class InstagramAccessibilityService : AccessibilityService() {
                 )
                 launch(Dispatchers.IO) {
                     try {
-                        database.reelDao().insert(record)
+                        val rowId = database.reelDao().insert(record)
+                        activeRecordId = rowId
                     } catch (e: Exception) {
                         Log.e(TAG, "Error inserting into Room database", e)
                     }
                 }
 
                 ReelTrackerState.incrementCount(newFingerprint)
-                Log.i(TAG, "Reel Saved to DB (#${ReelTrackerState.reelCount.value}): $newFingerprint")
+                Log.i(TAG, "Reel Confirmed (#${ReelTrackerState.reelCount.value}): $newFingerprint")
             }
         }
     }
 
+    private fun commitActiveReelTime() {
+        if (activeRecordId > 0 && activeReelStartTime > 0) {
+            val elapsed = System.currentTimeMillis() - activeReelStartTime
+            val finalDwellMs = elapsed.coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
+            val idToUpdate = activeRecordId
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    database.reelDao().updateDwellTime(idToUpdate, finalDwellMs)
+                    Log.d(TAG, "Updated Reel #$idToUpdate dwell time to ${finalDwellMs / 1000}s")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error updating dwell time", e)
+                }
+            }
+            activeRecordId = 0L
+        }
+    }
+
     override fun onInterrupt() {
+        commitActiveReelTime()
         Log.w(TAG, "ScrollMeter Accessibility Service Interrupted")
     }
 }

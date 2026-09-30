@@ -15,13 +15,14 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AvTimer
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
@@ -71,6 +72,9 @@ fun ScrollMeterDashboardScreen() {
 
     // Live Room Database flows
     val todayCount by reelDao.observeCountForDate(todayDate).collectAsState(initial = 0)
+    val todayTimeMs by reelDao.observeTotalTimeForDate(todayDate).collectAsState(initial = 0L)
+    val todayAvgMs by reelDao.observeAvgTimeForDate(todayDate).collectAsState(initial = 0.0)
+
     val yesterdayCount by reelDao.observeCountForDate(yesterdayDate).collectAsState(initial = 0)
     val totalCount by reelDao.observeTotalCount().collectAsState(initial = 0)
     val dailyStats by reelDao.observeDailyStats().collectAsState(initial = emptyList())
@@ -148,7 +152,7 @@ fun ScrollMeterDashboardScreen() {
                                 )
                                 Text(
                                     text = if (isAccessibilityEnabledInSystem)
-                                        "Saving Reels to SQLite database"
+                                        "Tracking Reels & Watch Time in SQLite"
                                     else
                                         "Enable service to track Reels",
                                     fontSize = 12.sp,
@@ -173,7 +177,7 @@ fun ScrollMeterDashboardScreen() {
                 }
             }
 
-            // Big Live Counter Card (Today)
+            // Big Live Counter & Time Card (Today)
             item {
                 Card(
                     shape = RoundedCornerShape(24.dp),
@@ -185,7 +189,7 @@ fun ScrollMeterDashboardScreen() {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 28.dp, horizontal = 16.dp),
+                            .padding(vertical = 24.dp, horizontal = 16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
@@ -196,7 +200,7 @@ fun ScrollMeterDashboardScreen() {
                             color = MaterialTheme.colorScheme.primary
                         )
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
 
                         AnimatedContent(
                             targetState = todayCount,
@@ -205,7 +209,7 @@ fun ScrollMeterDashboardScreen() {
                         ) { count ->
                             Text(
                                 text = "$count",
-                                fontSize = 68.sp,
+                                fontSize = 64.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = (-1.5).sp,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -213,6 +217,25 @@ fun ScrollMeterDashboardScreen() {
                         }
 
                         Spacer(modifier = Modifier.height(14.dp))
+
+                        // Reels Time Highlights
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            MetricPill(
+                                icon = Icons.Default.Schedule,
+                                title = "Reels Watch Time",
+                                value = formatDuration(todayTimeMs)
+                            )
+                            MetricPill(
+                                icon = Icons.Default.AvTimer,
+                                title = "Avg / Reel",
+                                value = formatAvgSeconds(todayAvgMs)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -251,7 +274,7 @@ fun ScrollMeterDashboardScreen() {
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                text = "Daily History (SQLite)",
+                                text = "Daily History (Reels & Time)",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
@@ -367,6 +390,40 @@ fun ScrollMeterDashboardScreen() {
 }
 
 @Composable
+fun MetricPill(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, value: String) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Column {
+                Text(
+                    text = title,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = value,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun QuickStatBadge(title: String, value: String) {
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -414,13 +471,40 @@ fun DailyStatRow(stat: DayStat, today: String, yesterday: String) {
             color = if (stat.date == today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
         )
 
-        Text(
-            text = "${stat.count} reels",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "${stat.count} reels",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (stat.totalDurationMs > 0) {
+                Text(
+                    text = "• ${formatDuration(stat.totalDurationMs)}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
     }
+}
+
+fun formatDuration(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    val hours = minutes / 60
+
+    return when {
+        hours > 0 -> "${hours}h ${minutes % 60}m"
+        minutes > 0 -> "${minutes}m ${seconds}s"
+        else -> "${seconds}s"
+    }
+}
+
+fun formatAvgSeconds(avgMs: Double): String {
+    val sec = avgMs / 1000.0
+    return if (sec <= 0.0) "0s" else String.format(Locale.getDefault(), "%.1fs", sec)
 }
 
 private fun getFormattedDate(daysOffset: Int): String {
