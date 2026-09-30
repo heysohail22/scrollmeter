@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.AvTimer
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
@@ -63,6 +64,8 @@ import com.scrollmeter.app.data.AppDatabase
 import com.scrollmeter.app.data.DayStat
 import com.scrollmeter.app.data.ReelRecord
 import com.scrollmeter.app.data.ReelSession
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -139,6 +142,53 @@ fun ScrollMeterAppRoot() {
         selectedSessionId = null
     }
 
+    val coroutineScope = rememberCoroutineScope()
+    var showClearDialog by remember { mutableStateOf(false) }
+
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            containerColor = ScrollMeterColors.CardBackground,
+            titleContentColor = ScrollMeterColors.PrimaryText,
+            textContentColor = ScrollMeterColors.SecondaryText,
+            title = {
+                Text(
+                    text = "Clear All Data?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "This will permanently remove all tracked reels, viewing sessions, and reset your time stats to zero. This action cannot be undone.",
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            reelDao.clearAllData()
+                            ReelTrackerState.resetCount()
+                        }
+                        showClearDialog = false
+                    }
+                ) {
+                    Text(
+                        text = "Clear All",
+                        color = ScrollMeterColors.NegativeRed,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) {
+                    Text(text = "Cancel", color = ScrollMeterColors.SecondaryText)
+                }
+            }
+        )
+    }
+
     Scaffold(
         containerColor = ScrollMeterColors.MainBackground,
         bottomBar = {
@@ -183,7 +233,8 @@ fun ScrollMeterAppRoot() {
                         onServiceCardClick = {
                             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         },
-                        onViewAllClick = { selectedNav = NavDestination.HISTORY }
+                        onViewAllClick = { selectedNav = NavDestination.HISTORY },
+                        onClearClick = { showClearDialog = true }
                     )
                 }
 
@@ -191,7 +242,8 @@ fun ScrollMeterAppRoot() {
                     SessionsHistoryScreen(
                         sessions = allSessions,
                         todayDate = todayDate,
-                        onSessionClick = { session -> selectedSessionId = session.id }
+                        onSessionClick = { session -> selectedSessionId = session.id },
+                        onClearClick = { showClearDialog = true }
                     )
                 }
 
@@ -226,7 +278,8 @@ fun HomeScreen(
     displayMonth: String,
     isServiceActive: Boolean,
     onServiceCardClick: () -> Unit,
-    onViewAllClick: () -> Unit
+    onViewAllClick: () -> Unit,
+    onClearClick: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -238,7 +291,10 @@ fun HomeScreen(
 
         // Top Bar
         item {
-            DashboardHeader(onSettingsClick = onServiceCardClick)
+            DashboardHeader(
+                onSettingsClick = onServiceCardClick,
+                onClearClick = onClearClick
+            )
         }
 
         // 1. Service Status Card
@@ -289,7 +345,8 @@ fun HomeScreen(
 fun SessionsHistoryScreen(
     sessions: List<ReelSession>,
     todayDate: String,
-    onSessionClick: (ReelSession) -> Unit
+    onSessionClick: (ReelSession) -> Unit,
+    onClearClick: () -> Unit
 ) {
     val yesterdayDate = remember { getFormattedDate(-1) }
     val groupedSessions = remember(sessions) {
@@ -306,24 +363,44 @@ fun SessionsHistoryScreen(
 
         // Top Header
         item {
-            Column {
-                Text(
-                    text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = ScrollMeterColors.PrimaryText, fontWeight = FontWeight.Bold, fontSize = 28.sp)) {
-                            append("Scroll")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = buildAnnotatedString {
+                            withStyle(SpanStyle(color = ScrollMeterColors.PrimaryText, fontWeight = FontWeight.Bold, fontSize = 28.sp)) {
+                                append("Scroll")
+                            }
+                            withStyle(SpanStyle(color = ScrollMeterColors.BrightPurple, fontWeight = FontWeight.Bold, fontSize = 28.sp)) {
+                                append("Meter")
+                            }
                         }
-                        withStyle(SpanStyle(color = ScrollMeterColors.BrightPurple, fontWeight = FontWeight.Bold, fontSize = 28.sp)) {
-                            append("Meter")
-                        }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Sessions History",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ScrollMeterColors.PrimaryText
+                    )
+                }
+
+                if (sessions.isNotEmpty()) {
+                    IconButton(
+                        onClick = onClearClick,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Clear History",
+                            tint = ScrollMeterColors.NegativeRed,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Sessions History",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ScrollMeterColors.PrimaryText
-                )
+                }
             }
         }
 
@@ -749,7 +826,10 @@ fun ReelDetailCard(reel: ReelRecord) {
 // TOP HEADER
 // ==========================================
 @Composable
-fun DashboardHeader(onSettingsClick: () -> Unit) {
+fun DashboardHeader(
+    onSettingsClick: () -> Unit,
+    onClearClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -776,16 +856,29 @@ fun DashboardHeader(onSettingsClick: () -> Unit) {
             )
         }
 
-        IconButton(
-            onClick = onSettingsClick,
-            modifier = Modifier.size(40.dp)
-        ) {
-            Icon(
-                Icons.Outlined.Settings,
-                contentDescription = "Settings",
-                tint = ScrollMeterColors.PrimaryText,
-                modifier = Modifier.size(24.dp)
-            )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onClearClick,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Clear All Data",
+                    tint = ScrollMeterColors.SecondaryText,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            IconButton(
+                onClick = onSettingsClick,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Settings,
+                    contentDescription = "Settings",
+                    tint = ScrollMeterColors.PrimaryText,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }

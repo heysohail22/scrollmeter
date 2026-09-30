@@ -57,7 +57,16 @@ interface ReelDao {
     @Query("SELECT * FROM reel_sessions WHERE id = :sessionId LIMIT 1")
     suspend fun getSessionById(sessionId: Long): ReelSession?
 
-    @Query("UPDATE reel_sessions SET endTime = :endTime, totalReels = (SELECT COUNT(*) FROM reel_records WHERE sessionId = :sessionId), totalDurationMs = (SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId) WHERE id = :sessionId")
+    @Query("UPDATE reel_records SET caption = CASE WHEN (caption IS NULL OR caption = '') THEN :caption ELSE caption END, audioTrack = CASE WHEN (audioTrack IS NULL OR audioTrack = '') THEN :audioTrack ELSE audioTrack END WHERE id = :id")
+    suspend fun updateMetadataIfEmpty(id: Long, caption: String, audioTrack: String)
+
+    @Query("SELECT COUNT(*) FROM reel_records WHERE sessionId = :sessionId")
+    suspend fun getSessionReelCount(sessionId: Long): Int
+
+    @Query("SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId")
+    suspend fun getSessionTotalDwell(sessionId: Long): Long
+
+    @Query("UPDATE reel_sessions SET endTime = :endTime, totalReels = (SELECT COUNT(*) FROM reel_records WHERE sessionId = :sessionId), totalDurationMs = MAX(:endTime - startTime, (SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId)) WHERE id = :sessionId")
     suspend fun refreshSessionStats(sessionId: Long, endTime: Long)
 
     @Query("DELETE FROM reel_records")
@@ -65,4 +74,10 @@ interface ReelDao {
 
     @Query("DELETE FROM reel_sessions")
     suspend fun clearAllSessions()
+
+    @androidx.room.Transaction
+    suspend fun clearAllData() {
+        clearAll()
+        clearAllSessions()
+    }
 }

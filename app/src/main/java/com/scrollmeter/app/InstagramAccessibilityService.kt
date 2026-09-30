@@ -12,7 +12,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -21,6 +23,7 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main)
     private var dwellJob: Job? = null
+    private var liveTickerJob: Job? = null
     private lateinit var database: AppDatabase
 
     // Session tracking
@@ -28,8 +31,9 @@ class InstagramAccessibilityService : AccessibilityService() {
     private var lastReelActivityTimestamp: Long = 0L
 
     // Active reel tracking
-    private var activeFingerprint: String = ""
-    private var isCurrentReelCounted: Boolean = false
+    private var activeCreator: String = ""
+    private var activeCaption: String = ""
+    private var activeAudio: String = ""
     private var activeReelStartTime: Long = 0L
     private var activeRecordId: Long = 0L
     private var lastScanTimestamp: Long = 0L
@@ -41,11 +45,11 @@ class InstagramAccessibilityService : AccessibilityService() {
         private const val TAG = "ScrollMeterService"
         const val INSTAGRAM_PKG = "com.instagram.android"
         
-        // 1.0s dwell threshold
+        // 1.0s dwell threshold to verify genuine viewing
         const val MIN_DWELL_TIME_MS = 1000L
         
-        // Cap single Reel watch time to 120s
-        const val MAX_REEL_WATCH_CAP_MS = 120_000L
+        // Cap single Reel watch time to 180s (3 minutes) to prevent runaways
+        const val MAX_REEL_WATCH_CAP_MS = 180_000L
         
         // If user is away from Reels for > 90 seconds, close session
         const val SESSION_TIMEOUT_MS = 90_000L
@@ -87,6 +91,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         super.onDestroy()
         commitActiveReelTime()
         closeCurrentSessionIfActive()
+        liveTickerJob?.cancel()
         dwellJob?.cancel()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
@@ -98,10 +103,9 @@ class InstagramAccessibilityService : AccessibilityService() {
         val eventPkg = event.packageName?.toString() ?: ""
         if (eventPkg != INSTAGRAM_PKG) {
             commitActiveReelTime()
-            if (!isCurrentReelCounted) {
-                dwellJob?.cancel()
-            }
-            activeFingerprint = ""
+            liveTickerJob?.cancel()
+            dwellJob?.cancel()
+            activeCreator = ""
             return
         }
 
@@ -116,7 +120,9 @@ class InstagramAccessibilityService : AccessibilityService() {
             val rootPkg = rootNode.packageName?.toString() ?: ""
             if (rootPkg != INSTAGRAM_PKG) {
                 commitActiveReelTime()
-                activeFingerprint = ""
+                liveTickerJob?.cancel()
+                dwellJob?.cancel()
+                activeCreator = ""
                 return
             }
 
@@ -152,7 +158,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 isReelsSurface = true
             }
 
-            // Extract Creator
+            // Extract Creator & Audio from content descriptions
             if (!desc.isNullOrEmpty()) {
                 if (desc.startsWith("Reel by ", ignoreCase = true)) {
                     isReelsSurface = true
@@ -182,7 +188,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                     !text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' }
                 ) {
                     if (text.length > 20 && detectedCaption.isEmpty()) {
-                        detectedCaption = text.take(120)
+                        detectedCaption = text.take(140)
                     } else if (text.length < 80) {
                         candidateTexts.add(text)
                     }
@@ -196,9 +202,12 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
+        // If user left Reels (e.g. navigated to Feed or DMs), finalize active Reel time
         if (!isReelsSurface && detectedCreator.isEmpty()) {
             commitActiveReelTime()
-            activeFingerprint = ""
+            liveTickerJob?.cancel()
+            dwellJob?.cancel()
+            activeCreator = ""
             return
         }
 
@@ -210,81 +219,121 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         if (pageName.isBlank()) return
 
-        val fingerprint = if (detectedAudio.isNotEmpty()) "$pageName | $detectedAudio" else pageName
+        // 1. Check if this is the SAME Reel currently playing
+        val isSameReel = (activeRecordId > 0L || dwellJob?.isActive == true) &&
+                pageName.equals(activeCreator, ignoreCase = true)
 
-        if (fingerprint != activeFingerprint) {
-            handleReelTransition(
-                pageName = pageName,
-                audioName = detectedAudio,
-                caption = detectedCaption,
-                fingerprint = fingerprint,
-                transitionTime = currentTime
-            )
+        if (isSameReel) {
+            // Update last activity timestamp
+            lastReelActivityTimestamp = currentTime
+
+            // Enrich caption/audio if they loaded after initial detection
+            if (activeRecordId > 0L && (detectedAudio.isNotEmpty() || detectedCaption.isNotEmpty())) {
+                serviceScope.launch(Dispatchers.IO) {
+                    try {
+                        database.reelDao().updateMetadataIfEmpty(activeRecordId, detectedCaption, detectedAudio)
+                    } catch (_: Exception) {}
+                }
+            }
+            return
         }
+
+        // 2. Different Reel detected -> Handle transition
+        handleReelTransition(
+            pageName = pageName,
+            audioName = detectedAudio,
+            caption = detectedCaption,
+            transitionTime = currentTime
+        )
     }
 
     private fun handleReelTransition(
         pageName: String,
         audioName: String,
         caption: String,
-        fingerprint: String,
         transitionTime: Long
     ) {
+        // Commit dwell time for the previous Reel
         commitActiveReelTime()
+        liveTickerJob?.cancel()
         dwellJob?.cancel()
 
-        activeFingerprint = fingerprint
+        activeCreator = pageName
+        activeCaption = caption
+        activeAudio = audioName
         activeReelStartTime = transitionTime
         activeRecordId = 0L
-        ReelTrackerState.updateCurrentCandidate(fingerprint)
 
-        if (recentlyCountedReels.contains(fingerprint)) {
-            isCurrentReelCounted = true
-            return
-        }
+        ReelTrackerState.updateCurrentCandidate(pageName)
 
-        isCurrentReelCounted = false
+        val isAlreadyCounted = recentlyCountedReels.contains(pageName)
 
         dwellJob = serviceScope.launch {
             delay(MIN_DWELL_TIME_MS)
-            if (!isCurrentReelCounted && activeFingerprint == fingerprint) {
-                isCurrentReelCounted = true
-
-                if (recentlyCountedReels.size >= 15) {
-                    recentlyCountedReels.removeFirst()
+            
+            // Confirm the user stayed on this reel for at least MIN_DWELL_TIME_MS
+            if (activeCreator.equals(pageName, ignoreCase = true)) {
+                if (!isAlreadyCounted) {
+                    if (recentlyCountedReels.size >= 15) {
+                        recentlyCountedReels.removeFirst()
+                    }
+                    recentlyCountedReels.addLast(pageName)
+                    ReelTrackerState.incrementCount(pageName)
                 }
-                recentlyCountedReels.addLast(fingerprint)
 
-                // Ensure active session exists or create a new session
+                // Ensure an active session exists (or create one)
                 ensureActiveSession(transitionTime) { sessionId ->
                     val record = ReelRecord(
                         sessionId = sessionId,
                         dateString = getTodayDateString(),
-                        timestamp = System.currentTimeMillis(),
+                        timestamp = transitionTime,
                         creator = pageName,
                         caption = caption,
                         audioTrack = audioName,
                         dwellTimeMs = MIN_DWELL_TIME_MS
                     )
-                    launch(Dispatchers.IO) {
+
+                    serviceScope.launch(Dispatchers.IO) {
                         try {
                             val rowId = database.reelDao().insert(record)
                             activeRecordId = rowId
                             database.reelDao().refreshSessionStats(sessionId, System.currentTimeMillis())
+
+                            // Launch live ticker to continually update dwell time every second
+                            withContext(Dispatchers.Main) {
+                                startLiveTicker(rowId, sessionId, transitionTime)
+                            }
                         } catch (e: Exception) {
                             Log.e(TAG, "Error inserting ReelRecord", e)
                         }
                     }
                 }
 
-                ReelTrackerState.incrementCount(fingerprint)
-                Log.i(TAG, "Reel Recorded in Session #$currentSessionId: $pageName")
+                Log.i(TAG, "Reel Confirmed: $pageName (Session #$currentSessionId)")
+            }
+        }
+    }
+
+    private fun startLiveTicker(recordId: Long, sessionId: Long, startTime: Long) {
+        liveTickerJob?.cancel()
+        liveTickerJob = serviceScope.launch {
+            while (isActive) {
+                delay(1000L)
+                val now = System.currentTimeMillis()
+                val elapsedMs = (now - startTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
+                
+                withContext(Dispatchers.IO) {
+                    try {
+                        database.reelDao().updateDwellTime(recordId, elapsedMs)
+                        database.reelDao().refreshSessionStats(sessionId, now)
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
 
     private fun ensureActiveSession(currentTime: Long, onReady: (Long) -> Unit) {
-        // If away for more than 90 seconds, start a brand new session
+        // If away for more than 90 seconds, close previous session and start a new one
         val isNewSessionNeeded = currentSessionId == 0L ||
                 (currentTime - lastReelActivityTimestamp > SESSION_TIMEOUT_MS)
 
@@ -306,7 +355,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 )
                 val newId = database.reelDao().insertSession(newSession)
                 currentSessionId = newId
-                launch(Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
                     onReady(newId)
                 }
             }
@@ -316,6 +365,7 @@ class InstagramAccessibilityService : AccessibilityService() {
     }
 
     private fun commitActiveReelTime() {
+        liveTickerJob?.cancel()
         if (activeRecordId > 0 && activeReelStartTime > 0) {
             val now = System.currentTimeMillis()
             val elapsed = now - activeReelStartTime
@@ -330,7 +380,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                         database.reelDao().refreshSessionStats(sessId, now)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error updating dwell time", e)
+                    Log.e(TAG, "Error committing dwell time", e)
                 }
             }
             activeRecordId = 0L
@@ -351,6 +401,8 @@ class InstagramAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
         commitActiveReelTime()
         closeCurrentSessionIfActive()
+        liveTickerJob?.cancel()
+        dwellJob?.cancel()
         Log.w(TAG, "ScrollMeter Accessibility Service Interrupted")
     }
 }
