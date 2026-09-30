@@ -113,6 +113,16 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        InstagramAccessibilityService.onAppForegroundedDirect()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        InstagramAccessibilityService.onAppBackgroundedDirect()
+    }
 }
 
 @Composable
@@ -147,6 +157,7 @@ fun ScrollMeterAppRoot() {
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        InstagramAccessibilityService.onAppForegroundedDirect()
         isAccessibilityEnabled = checkAccessibilityEnabled(context)
         isNotchEnabled = NotchOverlayManager.isOverlayEnabled(context)
     }

@@ -59,6 +59,22 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         private val USERNAME_REGEX = Regex("^[a-zA-Z0-9._]{2,30}$")
 
+        @Volatile
+        var isAppInForeground: Boolean = false
+            private set
+
+        var instance: InstagramAccessibilityService? = null
+            private set
+
+        fun onAppForegroundedDirect() {
+            isAppInForeground = true
+            instance?.onAppForegrounded()
+        }
+
+        fun onAppBackgroundedDirect() {
+            isAppInForeground = false
+        }
+
         // Blacklist common UI buttons, actions, and system labels that must NEVER be treated as creators
         private val SYSTEM_BLACKLIST = setOf(
             "playback", "play", "pause", "liked", "like", "unlike",
@@ -82,12 +98,14 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         database = AppDatabase.getInstance(applicationContext)
         notchOverlayManager = NotchOverlayManager(this)
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         try {
             val info = serviceInfo ?: AccessibilityServiceInfo()
             info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
@@ -109,37 +127,51 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
+        onAppForegrounded()
+        closeCurrentSessionIfActive()
+        notchOverlayManager.destroy()
+        ReelTrackerState.setServiceRunning(false)
+        ReelTrackerState.updateStatus("Accessibility Service stopped")
+    }
+
+    fun onAppForegrounded() {
         commitActiveReelTime()
         closeCurrentSessionIfActive()
         liveTickerJob?.cancel()
         dwellJob?.cancel()
-        notchOverlayManager.destroy()
-        ReelTrackerState.setServiceRunning(false)
-        ReelTrackerState.updateStatus("Accessibility Service stopped")
+        activeCreator = ""
+        activeRecordId = 0L
+        activeReelStartTime = 0L
+        notchOverlayManager.hide()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
         val eventPkg = event.packageName?.toString() ?: ""
-        // Crucial: Ignore events from our own app and floating overlay so we never self-interrupt!
+
+        // If user switched to ScrollMeter app: stop timer, commit reel, and hide floating pill!
         if (eventPkg == packageName || eventPkg == "com.scrollmeter.app") {
+            onAppForegroundedDirect()
             return
         }
 
         if (eventPkg != INSTAGRAM_PKG) {
-            // Only hide and commit if the user actually navigated away to a different app window
+            // Check if user navigated away from Instagram (to Home launcher, Recents, or another app)
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                val activePkg = rootInActiveWindow?.packageName?.toString() ?: ""
-                if (activePkg.isNotEmpty() && activePkg != INSTAGRAM_PKG && activePkg != packageName && activePkg != "com.scrollmeter.app") {
-                    commitActiveReelTime()
-                    liveTickerJob?.cancel()
-                    dwellJob?.cancel()
-                    activeCreator = ""
-                    notchOverlayManager.hide()
+                val className = event.className?.toString() ?: ""
+                val isTransient = eventPkg.contains("inputmethod") ||
+                        (eventPkg == "com.android.systemui" && (className.contains("Toast") || className.contains("Volume")))
+                if (!isTransient) {
+                    onAppForegrounded()
                 }
             }
-            // Do NOT wipe activeCreator on transient non-Instagram events (status bar, notifications, keyboard, etc.)
+            return
+        }
+
+        if (isAppInForeground) {
+            notchOverlayManager.hide()
             return
         }
 
@@ -465,8 +497,12 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     private fun startLiveTicker(recordId: Long, sessionId: Long, startTime: Long) {
         liveTickerJob?.cancel()
+        if (isAppInForeground) {
+            notchOverlayManager.hide()
+            return
+        }
         liveTickerJob = serviceScope.launch {
-            while (isActive) {
+            while (isActive && !isAppInForeground) {
                 val now = System.currentTimeMillis()
                 val elapsedMs = (now - startTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
                 
@@ -483,6 +519,13 @@ class InstagramAccessibilityService : AccessibilityService() {
                             sessionReels = sess.totalReels
                         }
                     } catch (_: Exception) {}
+                }
+
+                if (isAppInForeground) {
+                    withContext(Dispatchers.Main) {
+                        notchOverlayManager.hide()
+                    }
+                    break
                 }
 
                 withContext(Dispatchers.Main) {

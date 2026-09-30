@@ -62,7 +62,7 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     fun showOrUpdate(durationMs: Long, reelCount: Int) {
-        if (!isOverlayEnabled(context)) {
+        if (!isOverlayEnabled(context) || InstagramAccessibilityService.isAppInForeground) {
             hide()
             return
         }
@@ -114,17 +114,10 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     fun hide() {
-        if (overlayView != null && isAttached && overlayView?.visibility == View.VISIBLE) {
+        if (overlayView != null && isAttached) {
             overlayView?.animate()?.cancel()
-            overlayView?.animate()
-                ?.alpha(0f)
-                ?.setDuration(150)
-                ?.withEndAction {
-                    try {
-                        overlayView?.visibility = View.GONE
-                    } catch (_: Exception) {}
-                }
-                ?.start()
+            overlayView?.visibility = View.GONE
+            overlayView?.alpha = 0f
         }
     }
 
@@ -192,6 +185,7 @@ class NotchOverlayManager(private val context: Context) {
             gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE // Initially GONE until first genuine show
             alpha = DEFAULT_OVERLAY_ALPHA
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             setPadding(dpToPx(11f), dpToPx(4.5f), dpToPx(11f), dpToPx(4.5f))
 
             // Sleek Translucent Glass Pill Background with subtle border
@@ -207,6 +201,7 @@ class NotchOverlayManager(private val context: Context) {
             // Tap to open ScrollMeter App
             setOnClickListener {
                 try {
+                    InstagramAccessibilityService.onAppForegroundedDirect()
                     val intent = Intent(context, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     }
