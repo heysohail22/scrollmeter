@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -18,16 +19,21 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.AvTimer
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Poll
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.Settings
@@ -47,6 +53,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,6 +61,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.scrollmeter.app.data.AppDatabase
 import com.scrollmeter.app.data.DayStat
+import com.scrollmeter.app.data.ReelRecord
+import com.scrollmeter.app.data.ReelSession
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -89,26 +98,27 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ScrollMeterTheme {
-                ScrollMeterDashboardRoot()
+                ScrollMeterAppRoot()
             }
         }
     }
 }
 
 @Composable
-fun ScrollMeterDashboardRoot() {
+fun ScrollMeterAppRoot() {
     val context = LocalContext.current
     val database = remember { AppDatabase.getInstance(context) }
     val reelDao = database.reelDao()
 
     var selectedNav by remember { mutableStateOf(NavDestination.HOME) }
+    var selectedSessionId by remember { mutableStateOf<Long?>(null) }
 
     val todayDate = remember { getFormattedDate(0) }
     val currentMonthPrefix = remember { SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date()) }
     val displayDate = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date()) }
     val displayMonth = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
 
-    // 100% Real Room SQLite Data (No Mock/Fake Values)
+    // 100% Real Room Database flows
     val todayCount by reelDao.observeCountForDate(todayDate).collectAsState(initial = 0)
     val todayTimeMs by reelDao.observeTotalTimeForDate(todayDate).collectAsState(initial = 0L)
     val todayAvgMs by reelDao.observeAvgTimeForDate(todayDate).collectAsState(initial = 0.0)
@@ -116,6 +126,7 @@ fun ScrollMeterDashboardRoot() {
     val monthCount by reelDao.observeCountForMonth(currentMonthPrefix).collectAsState(initial = 0)
     val monthTimeMs by reelDao.observeTotalTimeForMonth(currentMonthPrefix).collectAsState(initial = 0L)
     val dailyStats by reelDao.observeDailyStats().collectAsState(initial = emptyList())
+    val allSessions by reelDao.observeAllSessions().collectAsState(initial = emptyList())
 
     var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
 
@@ -123,73 +134,613 @@ fun ScrollMeterDashboardRoot() {
         isAccessibilityEnabled = checkAccessibilityEnabled(context)
     }
 
+    // Handle back button when viewing a session detail
+    BackHandler(enabled = selectedSessionId != null) {
+        selectedSessionId = null
+    }
+
     Scaffold(
         containerColor = ScrollMeterColors.MainBackground,
         bottomBar = {
-            ScrollMeterBottomNavigation(
-                selected = selectedNav,
-                onSelect = { selectedNav = it }
-            )
+            if (selectedSessionId == null) {
+                ScrollMeterBottomNavigation(
+                    selected = selectedNav,
+                    onSelect = { selectedNav = it }
+                )
+            }
         }
     ) { innerPadding ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item { Spacer(Modifier.height(8.dp)) }
+            when {
+                selectedSessionId != null -> {
+                    val sId = selectedSessionId!!
+                    val sessionReels by reelDao.observeReelsForSession(sId).collectAsState(initial = emptyList())
+                    val sessionItem = allSessions.find { it.id == sId }
 
-            // Top Bar
-            item {
-                DashboardHeader(
-                    onSettingsClick = {
-                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    SessionDetailScreen(
+                        session = sessionItem,
+                        reels = sessionReels,
+                        onBack = { selectedSessionId = null }
+                    )
+                }
+
+                selectedNav == NavDestination.HOME -> {
+                    HomeScreen(
+                        todayCount = todayCount,
+                        todayTimeMs = todayTimeMs,
+                        todayAvgMs = todayAvgMs,
+                        monthCount = monthCount,
+                        monthTimeMs = monthTimeMs,
+                        dailyStats = dailyStats,
+                        todayDate = todayDate,
+                        displayDate = displayDate,
+                        displayMonth = displayMonth,
+                        isServiceActive = isAccessibilityEnabled,
+                        onServiceCardClick = {
+                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        },
+                        onViewAllClick = { selectedNav = NavDestination.HISTORY }
+                    )
+                }
+
+                selectedNav == NavDestination.HISTORY -> {
+                    SessionsHistoryScreen(
+                        sessions = allSessions,
+                        todayDate = todayDate,
+                        onSessionClick = { session -> selectedSessionId = session.id }
+                    )
+                }
+
+                else -> {
+                    // Insights / Saved placeholder
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "${selectedNav.name} feature coming soon",
+                            color = ScrollMeterColors.SecondaryText,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// SCREEN 1: HOME DASHBOARD
+// ==========================================
+@Composable
+fun HomeScreen(
+    todayCount: Int,
+    todayTimeMs: Long,
+    todayAvgMs: Double,
+    monthCount: Int,
+    monthTimeMs: Long,
+    dailyStats: List<DayStat>,
+    todayDate: String,
+    displayDate: String,
+    displayMonth: String,
+    isServiceActive: Boolean,
+    onServiceCardClick: () -> Unit,
+    onViewAllClick: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 22.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item { Spacer(Modifier.height(8.dp)) }
+
+        // Top Bar
+        item {
+            DashboardHeader(onSettingsClick = onServiceCardClick)
+        }
+
+        // 1. Service Status Card
+        item {
+            ServiceStatusCard(
+                isActive = isServiceActive,
+                onClick = onServiceCardClick
+            )
+        }
+
+        // 2. Today Card (Real Data)
+        item {
+            TodayHeroCard(
+                todayCount = todayCount,
+                todayTimeMs = todayTimeMs,
+                todayAvgMs = todayAvgMs,
+                displayDate = displayDate
+            )
+        }
+
+        // 3. This Month Card (Real Data)
+        item {
+            ThisMonthCardClean(
+                monthCount = monthCount,
+                monthTimeMs = monthTimeMs,
+                displayMonth = displayMonth
+            )
+        }
+
+        // 4. Last 7 Days Card (Real Data)
+        item {
+            Last7DaysLargeCard(
+                dailyStats = dailyStats,
+                todayDate = todayDate,
+                todayCount = todayCount,
+                onViewAllClick = onViewAllClick
+            )
+        }
+
+        item { Spacer(Modifier.height(20.dp)) }
+    }
+}
+
+// ==========================================
+// SCREEN 2: SESSIONS HISTORY (BY DATE & SESSIONS)
+// ==========================================
+@Composable
+fun SessionsHistoryScreen(
+    sessions: List<ReelSession>,
+    todayDate: String,
+    onSessionClick: (ReelSession) -> Unit
+) {
+    val yesterdayDate = remember { getFormattedDate(-1) }
+    val groupedSessions = remember(sessions) {
+        sessions.groupBy { it.dateString }
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 22.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item { Spacer(Modifier.height(8.dp)) }
+
+        // Top Header
+        item {
+            Column {
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(color = ScrollMeterColors.PrimaryText, fontWeight = FontWeight.Bold, fontSize = 28.sp)) {
+                            append("Scroll")
+                        }
+                        withStyle(SpanStyle(color = ScrollMeterColors.BrightPurple, fontWeight = FontWeight.Bold, fontSize = 28.sp)) {
+                            append("Meter")
+                        }
                     }
                 )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Sessions History",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ScrollMeterColors.PrimaryText
+                )
             }
+        }
 
-            // 1. Service Status Card
+        if (sessions.isEmpty()) {
             item {
-                ServiceStatusCard(
-                    isActive = isAccessibilityEnabled,
-                    onClick = {
-                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = ScrollMeterColors.CardBackground,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp)
+                ) {
+                    Box(modifier = Modifier.padding(28.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "No recorded sessions yet.\nWatch Reels on Instagram to record your first session!",
+                            color = ScrollMeterColors.SecondaryText,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
                     }
-                )
+                }
+            }
+        } else {
+            groupedSessions.forEach { (dateKey, sessionList) ->
+                // Date Section Header
+                item {
+                    val dateHeaderLabel = when (dateKey) {
+                        todayDate -> "Today (${formatToDisplayDate(dateKey)})"
+                        yesterdayDate -> "Yesterday (${formatToDisplayDate(dateKey)})"
+                        else -> formatToDisplayDate(dateKey)
+                    }
+                    Text(
+                        text = dateHeaderLabel,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                    )
+                }
+
+                // List of sessions for this date
+                items(sessionList) { session ->
+                    SessionCard(
+                        session = session,
+                        onClick = { onSessionClick(session) }
+                    )
+                }
+            }
+        }
+
+        item { Spacer(Modifier.height(20.dp)) }
+    }
+}
+
+@Composable
+fun SessionCard(
+    session: ReelSession,
+    onClick: () -> Unit
+) {
+    val timeRangeStr = remember(session.startTime, session.endTime) {
+        val startFmt = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(session.startTime))
+        val endFmt = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(session.endTime))
+        if (session.endTime > session.startTime + 60000) "$startFmt - $endFmt" else startFmt
+    }
+
+    val durationText = remember(session.totalDurationMs) {
+        val mins = (session.totalDurationMs / 60000).toInt()
+        val secs = ((session.totalDurationMs % 60000) / 1000).toInt()
+        when {
+            mins > 0 -> "${mins} min"
+            secs > 0 -> "${secs} sec"
+            else -> "< 1 min"
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = ScrollMeterColors.CardBackground,
+        border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ScrollMeterColors.PurpleDarkTrack),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Schedule,
+                        contentDescription = null,
+                        tint = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = timeRangeStr,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ScrollMeterColors.PrimaryText
+                    )
+                    Text(
+                        text = "Session duration: $durationText",
+                        fontSize = 12.sp,
+                        color = ScrollMeterColors.SecondaryText
+                    )
+                }
             }
 
-            // 2. Today Card (Clean, Hero Card - 100% Real Data)
-            item {
-                TodayHeroCard(
-                    todayCount = todayCount,
-                    todayTimeMs = todayTimeMs,
-                    todayAvgMs = todayAvgMs,
-                    displayDate = displayDate
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "${session.totalReels} reels",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ScrollMeterColors.BrightPurple
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = ScrollMeterColors.MutedText,
+                    modifier = Modifier.size(18.dp)
                 )
             }
+        }
+    }
+}
 
-            // 3. This Month Card (Redesigned: Clean & Spacious without lines/mini-charts)
-            item {
-                ThisMonthCardClean(
-                    monthCount = monthCount,
-                    monthTimeMs = monthTimeMs,
-                    displayMonth = displayMonth
-                )
+// ==========================================
+// SCREEN 3: SESSION DETAIL (PAGE, CAPTION, SONG)
+// ==========================================
+@Composable
+fun SessionDetailScreen(
+    session: ReelSession?,
+    reels: List<ReelRecord>,
+    onBack: () -> Unit
+) {
+    val timeRangeStr = remember(session) {
+        if (session != null) {
+            val startFmt = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(session.startTime))
+            val endFmt = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(session.endTime))
+            "$startFmt - $endFmt"
+        } else "Session Details"
+    }
+
+    val totalDurationFormatted = remember(session) {
+        val totalMs = session?.totalDurationMs ?: 0L
+        val mins = totalMs / 60000
+        val secs = (totalMs % 60000) / 1000
+        if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 22.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item { Spacer(Modifier.height(8.dp)) }
+
+        // Top Navigation Header
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(ScrollMeterColors.CardBackground)
+                        .border(1.dp, ScrollMeterColors.Border, CircleShape)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = ScrollMeterColors.PrimaryText,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Column {
+                    Text(
+                        text = "Session Details",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ScrollMeterColors.PrimaryText
+                    )
+                    Text(
+                        text = timeRangeStr,
+                        fontSize = 12.sp,
+                        color = ScrollMeterColors.MutedText
+                    )
+                }
+            }
+        }
+
+        // Summary Card: Total Reels & Session Duration
+        item {
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = ScrollMeterColors.CardBackground,
+                border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Reels Watched",
+                            fontSize = 12.sp,
+                            color = ScrollMeterColors.MutedText
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "${session?.totalReels ?: reels.size}",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Black,
+                            color = ScrollMeterColors.PrimaryText
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(40.dp)
+                            .background(ScrollMeterColors.Border)
+                    )
+
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Watch Duration",
+                            fontSize = 12.sp,
+                            color = ScrollMeterColors.MutedText
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = totalDurationFormatted,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ScrollMeterColors.BrightPurple
+                        )
+                    }
+                }
+            }
+        }
+
+        // Header: Watched Reels in this session
+        item {
+            Text(
+                text = "Reels in this Session (${reels.size})",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = ScrollMeterColors.PrimaryText,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        // List of all Reels watched in this 10/15 min session
+        items(reels) { reel ->
+            ReelDetailCard(reel = reel)
+        }
+
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+fun ReelDetailCard(reel: ReelRecord) {
+    val timeFormatted = remember(reel.timestamp) {
+        SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(reel.timestamp))
+    }
+    val secondsWatched = (reel.dwellTimeMs / 1000).coerceAtLeast(1)
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = ScrollMeterColors.CardBackground,
+        border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header: Creator Page Name & Dwell Badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(ScrollMeterColors.PurpleDarkTrack),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Person,
+                            contentDescription = null,
+                            tint = ScrollMeterColors.BrightPurple,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            text = reel.creator.ifEmpty { "Instagram Creator" },
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ScrollMeterColors.PrimaryText
+                        )
+                        Text(
+                            text = timeFormatted,
+                            fontSize = 11.sp,
+                            color = ScrollMeterColors.MutedText
+                        )
+                    }
+                }
+
+                // Dwell time pill badge
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ScrollMeterColors.PurpleDarkTrack,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.BrightPurple.copy(alpha = 0.4f))
+                ) {
+                    Text(
+                        text = "${secondsWatched}s watched",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
 
-            // 4. Last 7 Days Card (Real data from SQLite)
-            item {
-                Last7DaysLargeCard(
-                    dailyStats = dailyStats,
-                    todayDate = todayDate,
-                    todayCount = todayCount,
-                    onViewAllClick = { selectedNav = NavDestination.HISTORY }
-                )
+            // Song / Audio Name (if detected)
+            if (reel.audioTrack.isNotBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Audiotrack,
+                        contentDescription = null,
+                        tint = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = reel.audioTrack,
+                        fontSize = 12.sp,
+                        color = ScrollMeterColors.SecondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
-            item { Spacer(Modifier.height(20.dp)) }
+            // Caption Text (if detected)
+            if (reel.caption.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ScrollMeterColors.ElevatedCard,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Description,
+                            contentDescription = null,
+                            tint = ScrollMeterColors.MutedText,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = reel.caption,
+                            fontSize = 12.sp,
+                            color = ScrollMeterColors.SecondaryText,
+                            lineHeight = 16.sp,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -266,7 +817,6 @@ fun ServiceStatusCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Soft concentric glowing green circle
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -349,7 +899,6 @@ fun TodayHeroCard(
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Header: Today + Date (clean, no fake badges)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -384,13 +933,11 @@ fun TodayHeroCard(
                 }
             }
 
-            // Middle: Dominant count & Circular Watch-Time widget
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Dominant Reel Count
                 Column {
                     AnimatedContent(
                         targetState = todayCount,
@@ -413,14 +960,12 @@ fun TodayHeroCard(
                     )
                 }
 
-                // Circular Watch-Time Widget
                 CircularWatchTimeWidget(
                     displayTime = watchTimeText,
                     progress = if (totalSeconds > 0) (totalSeconds.toFloat() / 3600f).coerceIn(0.08f, 1f) else 0.05f
                 )
             }
 
-            // Clean bottom metrics row: Avg per Reel
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = ScrollMeterColors.ElevatedCard,
@@ -477,7 +1022,6 @@ fun CircularWatchTimeWidget(
             val topLeft = Offset(strokeWidth / 2, strokeWidth / 2)
             val arcSize = Size(diameter, diameter)
 
-            // Background circle track
             drawArc(
                 color = Color(0xFF1B2036),
                 startAngle = 0f,
@@ -488,7 +1032,6 @@ fun CircularWatchTimeWidget(
                 style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
             )
 
-            // Glowing purple progress arc
             drawArc(
                 brush = Brush.sweepGradient(
                     listOf(ScrollMeterColors.PurpleGlow, ScrollMeterColors.BrightPurple)
@@ -522,7 +1065,7 @@ fun CircularWatchTimeWidget(
 }
 
 // ==========================================
-// 3. THIS MONTH CARD (REDESIGNED: CLEAN & NO FAKE MINI-CHARTS)
+// 3. THIS MONTH CARD (CLEAN DUAL STATS)
 // ==========================================
 @Composable
 fun ThisMonthCardClean(
@@ -554,7 +1097,6 @@ fun ThisMonthCardClean(
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Header: This Month + Month Name (clean, no fake +18% badge)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -589,12 +1131,10 @@ fun ThisMonthCardClean(
                 }
             }
 
-            // Dual Stats Layout (Clean & Spacious)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Total Reels Watched this month
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = ScrollMeterColors.ElevatedCard,
@@ -619,7 +1159,6 @@ fun ThisMonthCardClean(
                     }
                 }
 
-                // Total Watch Time this month
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = ScrollMeterColors.ElevatedCard,
@@ -660,7 +1199,7 @@ fun ThisMonthCardClean(
 }
 
 // ==========================================
-// 4. LAST 7 DAYS CARD (100% REAL ROOM DATA)
+// 4. LAST 7 DAYS CARD (LARGE BAR CHART)
 // ==========================================
 @Composable
 fun Last7DaysLargeCard(
@@ -669,7 +1208,6 @@ fun Last7DaysLargeCard(
     todayCount: Int,
     onViewAllClick: () -> Unit
 ) {
-    // Pure, real historical data from Room
     val past7Days = remember(dailyStats, todayDate, todayCount) {
         generateRealPast7Days(dailyStats, todayDate, todayCount)
     }
@@ -691,7 +1229,6 @@ fun Last7DaysLargeCard(
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Header Row: Last 7 Days & View all →
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -731,13 +1268,11 @@ fun Last7DaysLargeCard(
                 }
             }
 
-            // Real 7-Day Chart Area with Y-axis guides
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp)
             ) {
-                // Background Y-Axis dashed guideline marks
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceBetween
@@ -762,7 +1297,6 @@ fun Last7DaysLargeCard(
                     }
                 }
 
-                // 7 Real Vertical Bars
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
@@ -772,7 +1306,6 @@ fun Last7DaysLargeCard(
                 ) {
                     past7Days.forEach { item ->
                         val isToday = item.isToday
-                        // Height proportional to actual real count in SQLite
                         val barHeightFactor = if (maxCount > 0) {
                             (item.count.toFloat() / maxCount.toFloat()).coerceIn(if (item.count > 0) 0.12f else 0.04f, 1f)
                         } else 0.04f
@@ -782,7 +1315,6 @@ fun Last7DaysLargeCard(
                             verticalArrangement = Arrangement.Bottom,
                             modifier = Modifier.width(36.dp)
                         ) {
-                            // Real count label above bar
                             Text(
                                 text = if (item.count > 0) "${item.count}" else "0",
                                 fontSize = 12.sp,
@@ -792,7 +1324,6 @@ fun Last7DaysLargeCard(
 
                             Spacer(Modifier.height(5.dp))
 
-                            // Rounded Bar
                             Box(
                                 modifier = Modifier
                                     .width(26.dp)
@@ -828,7 +1359,6 @@ fun Last7DaysLargeCard(
 
                             Spacer(Modifier.height(8.dp))
 
-                            // Date label below bar
                             Text(
                                 text = item.label,
                                 fontSize = 10.sp,
@@ -950,12 +1480,21 @@ fun generateRealPast7Days(dailyStats: List<DayStat>, todayDate: String, todayCou
         loopCal.add(Calendar.DAY_OF_YEAR, -i)
         val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(loopCal.time)
         val dayLabel = if (i == 0) "Today" else SimpleDateFormat("MMM d", Locale.getDefault()).format(loopCal.time)
-        
-        // Pure real data: if 0, it is 0
         val count = statsMap[dateKey] ?: 0
         result.add(DayChartItem(label = dayLabel, count = count, isToday = (i == 0)))
     }
     return result
+}
+
+fun formatToDisplayDate(dateKey: String): String {
+    return try {
+        val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateKey)
+        if (parsed != null) {
+            SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(parsed)
+        } else dateKey
+    } catch (_: Exception) {
+        dateKey
+    }
 }
 
 fun getFormattedDate(daysOffset: Int): String {

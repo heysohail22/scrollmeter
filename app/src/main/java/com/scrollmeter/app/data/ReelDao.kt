@@ -4,11 +4,13 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ReelDao {
 
+    // Reel Record queries
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(record: ReelRecord): Long
 
@@ -39,9 +41,28 @@ interface ReelDao {
     @Query("SELECT * FROM reel_records WHERE dateString = :dateString ORDER BY timestamp DESC")
     fun observeReelsForDate(dateString: String): Flow<List<ReelRecord>>
 
-    @Query("SELECT * FROM reel_records ORDER BY timestamp DESC LIMIT 25")
-    fun observeRecentReels(): Flow<List<ReelRecord>>
+    @Query("SELECT * FROM reel_records WHERE sessionId = :sessionId ORDER BY timestamp ASC")
+    fun observeReelsForSession(sessionId: Long): Flow<List<ReelRecord>>
+
+    // Session queries
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSession(session: ReelSession): Long
+
+    @Update
+    suspend fun updateSession(session: ReelSession)
+
+    @Query("SELECT * FROM reel_sessions ORDER BY startTime DESC")
+    fun observeAllSessions(): Flow<List<ReelSession>>
+
+    @Query("SELECT * FROM reel_sessions WHERE id = :sessionId LIMIT 1")
+    suspend fun getSessionById(sessionId: Long): ReelSession?
+
+    @Query("UPDATE reel_sessions SET endTime = :endTime, totalReels = (SELECT COUNT(*) FROM reel_records WHERE sessionId = :sessionId), totalDurationMs = (SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId) WHERE id = :sessionId")
+    suspend fun refreshSessionStats(sessionId: Long, endTime: Long)
 
     @Query("DELETE FROM reel_records")
     suspend fun clearAll()
+
+    @Query("DELETE FROM reel_sessions")
+    suspend fun clearAllSessions()
 }

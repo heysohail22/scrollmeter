@@ -7,6 +7,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.scrollmeter.app.data.AppDatabase
 import com.scrollmeter.app.data.ReelRecord
+import com.scrollmeter.app.data.ReelSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,27 +23,33 @@ class InstagramAccessibilityService : AccessibilityService() {
     private var dwellJob: Job? = null
     private lateinit var database: AppDatabase
 
-    // Track active reel state and watch duration
+    // Session tracking
+    private var currentSessionId: Long = 0L
+    private var lastReelActivityTimestamp: Long = 0L
+
+    // Active reel tracking
     private var activeFingerprint: String = ""
     private var isCurrentReelCounted: Boolean = false
     private var activeReelStartTime: Long = 0L
     private var activeRecordId: Long = 0L
     private var lastScanTimestamp: Long = 0L
 
-    // Cache of recently counted reels to prevent double-counting
+    // Deduplication cache
     private val recentlyCountedReels = ArrayDeque<String>(20)
 
     companion object {
         private const val TAG = "ScrollMeterService"
         const val INSTAGRAM_PKG = "com.instagram.android"
         
-        // 1.0s dwell threshold: rapid swipes (< 1000ms) are skipped,
-        // watching for >= 1.0s confirms an intentional Reel view.
+        // 1.0s dwell threshold
         const val MIN_DWELL_TIME_MS = 1000L
         
-        // Cap single Reel watch time to 120s (2 minutes) to prevent runaway time if left unattended
+        // Cap single Reel watch time to 120s
         const val MAX_REEL_WATCH_CAP_MS = 120_000L
         
+        // If user is away from Reels for > 90 seconds, close session
+        const val SESSION_TIMEOUT_MS = 90_000L
+
         private const val SCAN_THROTTLE_MS = 150L
 
         fun getTodayDateString(): String {
@@ -79,6 +86,7 @@ class InstagramAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         commitActiveReelTime()
+        closeCurrentSessionIfActive()
         dwellJob?.cancel()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
@@ -89,7 +97,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val eventPkg = event.packageName?.toString() ?: ""
         if (eventPkg != INSTAGRAM_PKG) {
-            // User left Instagram: pause watch timer and commit watch duration for current Reel
             commitActiveReelTime()
             if (!isCurrentReelCounted) {
                 dwellJob?.cancel()
@@ -121,7 +128,8 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     private fun inspectInstagramTree(root: AccessibilityNodeInfo, currentTime: Long) {
         var detectedCreator = ""
-        var detectedAudioOrCaption = ""
+        var detectedAudio = ""
+        var detectedCaption = ""
         var isReelsSurface = false
         val candidateTexts = mutableListOf<String>()
 
@@ -136,7 +144,7 @@ class InstagramAccessibilityService : AccessibilityService() {
             val text = node.text?.toString()?.trim()
             val viewId = node.viewIdResourceName ?: ""
 
-            // Check if user is currently inside Reels
+            // Detect Reels viewer surface
             if (viewId.contains("clips", ignoreCase = true) ||
                 viewId.contains("reel", ignoreCase = true) ||
                 desc?.startsWith("Reel by", ignoreCase = true) == true
@@ -144,7 +152,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 isReelsSurface = true
             }
 
-            // Extract Creator from Instagram's Reels content descriptions
+            // Extract Creator
             if (!desc.isNullOrEmpty()) {
                 if (desc.startsWith("Reel by ", ignoreCase = true)) {
                     isReelsSurface = true
@@ -159,19 +167,25 @@ class InstagramAccessibilityService : AccessibilityService() {
                         detectedCreator = creator
                     }
                 } else if (desc.contains("Original audio", ignoreCase = true) || desc.contains("Audio", ignoreCase = true)) {
-                    detectedAudioOrCaption = desc.take(40)
+                    detectedAudio = desc.take(60)
                 }
             }
 
-            // Extract candidate texts
-            if (!text.isNullOrEmpty() && text.length < 80) {
-                if (text !in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment", "Ad", "Sponsored", "More") &&
+            // Extract caption & audio text
+            if (!text.isNullOrEmpty()) {
+                if (text.contains("Original audio", ignoreCase = true)) {
+                    detectedAudio = text.take(60)
+                } else if (text !in setOf("Follow", "Following", "Reels", "Audio", "Liked by", "Share", "Comment", "Ad", "Sponsored", "More") &&
                     !text.startsWith("Like number", ignoreCase = true) &&
                     !text.startsWith("Comment number", ignoreCase = true) &&
                     !text.startsWith("See translation", ignoreCase = true) &&
                     !text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' }
                 ) {
-                    candidateTexts.add(text)
+                    if (text.length > 20 && detectedCaption.isEmpty()) {
+                        detectedCaption = text.take(120)
+                    } else if (text.length < 80) {
+                        candidateTexts.add(text)
+                    }
                 }
             }
 
@@ -182,89 +196,139 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
-        // If user left Reels (e.g. went to Feed or DMs), finalize active Reel time
         if (!isReelsSurface && detectedCreator.isEmpty()) {
             commitActiveReelTime()
             activeFingerprint = ""
             return
         }
 
-        val fingerprint = when {
-            detectedCreator.isNotEmpty() -> {
-                if (detectedAudioOrCaption.isNotEmpty()) "$detectedCreator | $detectedAudioOrCaption" else detectedCreator
-            }
+        val pageName = when {
+            detectedCreator.isNotEmpty() -> detectedCreator
             candidateTexts.isNotEmpty() -> candidateTexts.first()
             else -> ""
         }
 
-        if (fingerprint.isBlank()) return
+        if (pageName.isBlank()) return
+
+        val fingerprint = if (detectedAudio.isNotEmpty()) "$pageName | $detectedAudio" else pageName
 
         if (fingerprint != activeFingerprint) {
-            handleReelTransition(fingerprint, currentTime)
+            handleReelTransition(
+                pageName = pageName,
+                audioName = detectedAudio,
+                caption = detectedCaption,
+                fingerprint = fingerprint,
+                transitionTime = currentTime
+            )
         }
     }
 
-    private fun handleReelTransition(newFingerprint: String, transitionTime: Long) {
-        // 1. Commit watch time for the previous Reel before starting the new one
+    private fun handleReelTransition(
+        pageName: String,
+        audioName: String,
+        caption: String,
+        fingerprint: String,
+        transitionTime: Long
+    ) {
         commitActiveReelTime()
-
         dwellJob?.cancel()
 
-        activeFingerprint = newFingerprint
+        activeFingerprint = fingerprint
         activeReelStartTime = transitionTime
         activeRecordId = 0L
-        ReelTrackerState.updateCurrentCandidate(newFingerprint)
+        ReelTrackerState.updateCurrentCandidate(fingerprint)
 
-        if (recentlyCountedReels.contains(newFingerprint)) {
+        if (recentlyCountedReels.contains(fingerprint)) {
             isCurrentReelCounted = true
-            Log.d(TAG, "Reel already counted previously: $newFingerprint (Skipping recount)")
             return
         }
 
         isCurrentReelCounted = false
-        Log.i(TAG, "New Reel Candidate: $newFingerprint")
 
         dwellJob = serviceScope.launch {
             delay(MIN_DWELL_TIME_MS)
-            if (!isCurrentReelCounted && activeFingerprint == newFingerprint) {
+            if (!isCurrentReelCounted && activeFingerprint == fingerprint) {
                 isCurrentReelCounted = true
-                
+
                 if (recentlyCountedReels.size >= 15) {
                     recentlyCountedReels.removeFirst()
                 }
-                recentlyCountedReels.addLast(newFingerprint)
+                recentlyCountedReels.addLast(fingerprint)
 
-                // Insert into Room and store the record ID to update duration later
-                val record = ReelRecord(
-                    dateString = getTodayDateString(),
-                    timestamp = System.currentTimeMillis(),
-                    creator = newFingerprint,
-                    dwellTimeMs = MIN_DWELL_TIME_MS
-                )
-                launch(Dispatchers.IO) {
-                    try {
-                        val rowId = database.reelDao().insert(record)
-                        activeRecordId = rowId
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error inserting into Room database", e)
+                // Ensure active session exists or create a new session
+                ensureActiveSession(transitionTime) { sessionId ->
+                    val record = ReelRecord(
+                        sessionId = sessionId,
+                        dateString = getTodayDateString(),
+                        timestamp = System.currentTimeMillis(),
+                        creator = pageName,
+                        caption = caption,
+                        audioTrack = audioName,
+                        dwellTimeMs = MIN_DWELL_TIME_MS
+                    )
+                    launch(Dispatchers.IO) {
+                        try {
+                            val rowId = database.reelDao().insert(record)
+                            activeRecordId = rowId
+                            database.reelDao().refreshSessionStats(sessionId, System.currentTimeMillis())
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error inserting ReelRecord", e)
+                        }
                     }
                 }
 
-                ReelTrackerState.incrementCount(newFingerprint)
-                Log.i(TAG, "Reel Confirmed (#${ReelTrackerState.reelCount.value}): $newFingerprint")
+                ReelTrackerState.incrementCount(fingerprint)
+                Log.i(TAG, "Reel Recorded in Session #$currentSessionId: $pageName")
             }
+        }
+    }
+
+    private fun ensureActiveSession(currentTime: Long, onReady: (Long) -> Unit) {
+        // If away for more than 90 seconds, start a brand new session
+        val isNewSessionNeeded = currentSessionId == 0L ||
+                (currentTime - lastReelActivityTimestamp > SESSION_TIMEOUT_MS)
+
+        lastReelActivityTimestamp = currentTime
+
+        if (isNewSessionNeeded) {
+            val oldSessionId = currentSessionId
+            serviceScope.launch(Dispatchers.IO) {
+                if (oldSessionId > 0) {
+                    database.reelDao().refreshSessionStats(oldSessionId, currentTime)
+                }
+
+                val newSession = ReelSession(
+                    dateString = getTodayDateString(),
+                    startTime = currentTime,
+                    endTime = currentTime,
+                    totalReels = 1,
+                    totalDurationMs = MIN_DWELL_TIME_MS
+                )
+                val newId = database.reelDao().insertSession(newSession)
+                currentSessionId = newId
+                launch(Dispatchers.Main) {
+                    onReady(newId)
+                }
+            }
+        } else {
+            onReady(currentSessionId)
         }
     }
 
     private fun commitActiveReelTime() {
         if (activeRecordId > 0 && activeReelStartTime > 0) {
-            val elapsed = System.currentTimeMillis() - activeReelStartTime
+            val now = System.currentTimeMillis()
+            val elapsed = now - activeReelStartTime
             val finalDwellMs = elapsed.coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
             val idToUpdate = activeRecordId
+            val sessId = currentSessionId
+
             serviceScope.launch(Dispatchers.IO) {
                 try {
                     database.reelDao().updateDwellTime(idToUpdate, finalDwellMs)
-                    Log.d(TAG, "Updated Reel #$idToUpdate dwell time to ${finalDwellMs / 1000}s")
+                    if (sessId > 0) {
+                        database.reelDao().refreshSessionStats(sessId, now)
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error updating dwell time", e)
                 }
@@ -273,8 +337,20 @@ class InstagramAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun closeCurrentSessionIfActive() {
+        val sessId = currentSessionId
+        if (sessId > 0) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    database.reelDao().refreshSessionStats(sessId, System.currentTimeMillis())
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     override fun onInterrupt() {
         commitActiveReelTime()
+        closeCurrentSessionIfActive()
         Log.w(TAG, "ScrollMeter Accessibility Service Interrupted")
     }
 }
