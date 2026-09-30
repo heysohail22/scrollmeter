@@ -62,8 +62,7 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     fun showOrUpdate(durationMs: Long, reelCount: Int) {
-        val service = InstagramAccessibilityService.instance
-        if (!isOverlayEnabled(context) || InstagramAccessibilityService.isAppInForeground || service == null || !service.isInstagramForeground()) {
+        if (!isOverlayEnabled(context) || InstagramAccessibilityService.isScrollMeterForeground) {
             hide()
             return
         }
@@ -202,7 +201,7 @@ class NotchOverlayManager(private val context: Context) {
             // Tap to open ScrollMeter App
             setOnClickListener {
                 try {
-                    InstagramAccessibilityService.onAppForegroundedDirect()
+                    InstagramAccessibilityService.onScrollMeterResumed()
                     val intent = Intent(context, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     }

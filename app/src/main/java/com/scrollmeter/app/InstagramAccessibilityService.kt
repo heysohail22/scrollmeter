@@ -60,19 +60,19 @@ class InstagramAccessibilityService : AccessibilityService() {
         private val USERNAME_REGEX = Regex("^[a-zA-Z0-9._]{2,30}$")
 
         @Volatile
-        var isAppInForeground: Boolean = false
+        var isScrollMeterForeground: Boolean = false
             private set
 
         var instance: InstagramAccessibilityService? = null
             private set
 
-        fun onAppForegroundedDirect() {
-            isAppInForeground = true
+        fun onScrollMeterResumed() {
+            isScrollMeterForeground = true
             instance?.onAppForegrounded()
         }
 
-        fun onAppBackgroundedDirect() {
-            isAppInForeground = false
+        fun onScrollMeterPaused() {
+            isScrollMeterForeground = false
         }
 
         // Blacklist common UI buttons, actions, and system labels that must NEVER be treated as creators
@@ -150,25 +150,27 @@ class InstagramAccessibilityService : AccessibilityService() {
         notchOverlayManager.hide()
     }
 
-    fun isInstagramForeground(): Boolean {
-        if (isAppInForeground) return false
-        val activePkg = rootInActiveWindow?.packageName?.toString() ?: ""
-        return activePkg == INSTAGRAM_PKG
-    }
-
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
         val eventPkg = event.packageName?.toString() ?: ""
 
-        // If user is inside ScrollMeter: immediately stop timer, commit reel, and hide floating pill!
-        if (eventPkg == packageName || eventPkg == "com.scrollmeter.app" || isAppInForeground) {
-            onAppForegroundedDirect()
+        // 1. If event is from ScrollMeter: ensure foreground flag, kill any tickers/overlays, and return!
+        if (eventPkg == packageName || eventPkg == "com.scrollmeter.app") {
+            isScrollMeterForeground = true
+            onAppForegrounded()
             return
         }
 
+        // 2. If ScrollMeter is currently foregrounded: do not process background events!
+        if (isScrollMeterForeground) {
+            notchOverlayManager.hide()
+            liveTickerJob?.cancel()
+            return
+        }
+
+        // 3. If event is from another non-Instagram app (Launcher, Recents, Settings, WhatsApp):
         if (eventPkg != INSTAGRAM_PKG) {
-            // Check if user navigated away from Instagram (to Home launcher, Recents, or another app)
             val className = event.className?.toString() ?: ""
             val isTransient = eventPkg.contains("inputmethod") ||
                     (eventPkg == "com.android.systemui" && (className.contains("Toast") || className.contains("Volume")))
@@ -178,6 +180,7 @@ class InstagramAccessibilityService : AccessibilityService() {
             return
         }
 
+        // 4. --- Event is strictly from Instagram (com.instagram.android) ---
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastScanTimestamp < SCAN_THROTTLE_MS) {
             return
@@ -187,12 +190,10 @@ class InstagramAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
         try {
             val rootPkg = rootNode.packageName?.toString() ?: ""
-            if (rootPkg == packageName || rootPkg == "com.scrollmeter.app" || isAppInForeground) {
-                onAppForegroundedDirect()
-                return
-            }
-            if (rootPkg != INSTAGRAM_PKG) {
-                onAppForegrounded()
+            if (rootPkg.isNotEmpty() && rootPkg != INSTAGRAM_PKG) {
+                if (rootPkg == packageName || rootPkg == "com.scrollmeter.app") {
+                    onAppForegrounded()
+                }
                 return
             }
 
@@ -215,6 +216,8 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         fun scan(node: AccessibilityNodeInfo?) {
             if (node == null || scannedNodes >= maxNodesToScan) return
+            val nodePkg = node.packageName?.toString() ?: ""
+            if (nodePkg.isNotEmpty() && nodePkg != INSTAGRAM_PKG) return
             scannedNodes++
 
             val desc = node.contentDescription?.toString()?.trim() ?: ""
@@ -570,19 +573,12 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     private fun startLiveTicker(recordId: Long, sessionId: Long, startTime: Long) {
         liveTickerJob?.cancel()
-        if (isAppInForeground || !isInstagramForeground()) {
+        if (isScrollMeterForeground) {
             notchOverlayManager.hide()
             return
         }
         liveTickerJob = serviceScope.launch {
-            while (isActive) {
-                if (isAppInForeground || !isInstagramForeground()) {
-                    withContext(Dispatchers.Main) {
-                        notchOverlayManager.hide()
-                    }
-                    break
-                }
-
+            while (isActive && !isScrollMeterForeground) {
                 val now = System.currentTimeMillis()
                 val elapsedMs = (now - startTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
                 
@@ -601,7 +597,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                     } catch (_: Exception) {}
                 }
 
-                if (isAppInForeground || !isInstagramForeground()) {
+                if (isScrollMeterForeground) {
                     withContext(Dispatchers.Main) {
                         notchOverlayManager.hide()
                     }
