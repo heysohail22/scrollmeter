@@ -219,7 +219,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 isReelsSurface = true
             }
 
-            // 3. Extract Creator & Audio from "Reel by <author>" content description (Canonical Instagram format)
+            // 3. Extract Creator, Audio, and Caption from content descriptions
             if (desc.isNotEmpty()) {
                 if (desc.startsWith("Reel by ", ignoreCase = true)) {
                     isReelsSurface = true
@@ -228,23 +228,24 @@ class InstagramAccessibilityService : AccessibilityService() {
                     if (isValidUsername(creator)) {
                         detectedCreator = creator
                     }
-                    // Extract song name if included in the Reel description (e.g. "Reel by author • Song Title")
                     if (raw.contains("•")) {
                         val audioPart = raw.substringAfter("•").substringBefore(".").substringBefore(",").trim()
                         if (audioPart.isNotEmpty() && !SYSTEM_BLACKLIST.contains(audioPart.lowercase())) {
                             detectedAudio = audioPart.take(80)
                         }
                     }
-                    Log.i(TAG, "Found ReelDesc: creator='$creator', audio='$detectedAudio', raw='$raw'")
-                } else if (desc.contains("Original audio", ignoreCase = true) ||
+                } else if (desc.contains(" · ") ||
+                    desc.contains("Original audio", ignoreCase = true) ||
                     desc.startsWith("Audio:", ignoreCase = true) ||
                     (desc.contains("audio", ignoreCase = true) && desc.length > 5 && !desc.equals("Audio", ignoreCase = true))
                 ) {
                     val cleanAudio = desc.removePrefix("Audio:").removePrefix("audio:").trim()
-                    if (cleanAudio.isNotEmpty() && !SYSTEM_BLACKLIST.contains(cleanAudio.lowercase())) {
+                    if (cleanAudio.isNotEmpty() && !SYSTEM_BLACKLIST.contains(cleanAudio.lowercase()) && cleanAudio != detectedCreator) {
                         detectedAudio = cleanAudio.take(80)
-                        Log.i(TAG, "Found AudioDesc: '$cleanAudio'")
+                        Log.i(TAG, "Captured AudioTrack from desc: '$detectedAudio'")
                     }
+                } else if (detectedCaption.isEmpty() && (desc.startsWith("#") || (desc.length > 15 && !desc.contains("Double tap") && !desc.contains("View likes") && !desc.contains("View comments") && !desc.startsWith("Follow") && desc != detectedAudio))) {
+                    detectedCaption = desc.take(160)
                 }
             }
 
