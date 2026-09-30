@@ -24,10 +24,16 @@ interface ReelDao {
     @Query("SELECT COALESCE(AVG(dwellTimeMs), 0) FROM reel_records WHERE dateString = :dateString")
     fun observeAvgTimeForDate(dateString: String): Flow<Double>
 
+    @Query("SELECT COUNT(*) FROM reel_records WHERE dateString LIKE :monthPrefix || '%'")
+    fun observeCountForMonth(monthPrefix: String): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE dateString LIKE :monthPrefix || '%'")
+    fun observeTotalTimeForMonth(monthPrefix: String): Flow<Long>
+
     @Query("SELECT COUNT(*) FROM reel_records")
     fun observeTotalCount(): Flow<Int>
 
-    @Query("SELECT dateString as date, COUNT(*) as count, COALESCE(SUM(dwellTimeMs), 0) as totalDurationMs FROM reel_records GROUP BY dateString ORDER BY dateString DESC LIMIT 14")
+    @Query("SELECT dateString as date, COUNT(*) as count, COALESCE(SUM(dwellTimeMs), 0) as totalDurationMs FROM reel_records GROUP BY dateString ORDER BY dateString DESC LIMIT 31")
     fun observeDailyStats(): Flow<List<DayStat>>
 
     @Query("SELECT * FROM reel_records WHERE dateString = :dateString ORDER BY timestamp DESC")
