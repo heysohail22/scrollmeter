@@ -22,13 +22,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AvTimer
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.Poll
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,7 +40,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -78,8 +78,6 @@ object ScrollMeterColors {
 
     val ActiveGreen = Color(0xFF19E68C)
     val NegativeRed = Color(0xFFFF5C7A)
-    val GreenBadgeBg = Color(0xFF0C2422)
-    val GreenBadgeBorder = Color(0xFF123E37)
 }
 
 enum class NavDestination { HOME, HISTORY, INSIGHTS, SAVED }
@@ -110,18 +108,14 @@ fun ScrollMeterDashboardRoot() {
     val displayDate = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date()) }
     val displayMonth = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
 
-    // Live Room Database metrics
-    val dbTodayCount by reelDao.observeCountForDate(todayDate).collectAsState(initial = 0)
-    val dbTodayTimeMs by reelDao.observeTotalTimeForDate(todayDate).collectAsState(initial = 0L)
-    val dbMonthCount by reelDao.observeCountForMonth(currentMonthPrefix).collectAsState(initial = 0)
-    val dbMonthTimeMs by reelDao.observeTotalTimeForMonth(currentMonthPrefix).collectAsState(initial = 0L)
-    val dailyStats by reelDao.observeDailyStats().collectAsState(initial = emptyList())
+    // 100% Real Room SQLite Data (No Mock/Fake Values)
+    val todayCount by reelDao.observeCountForDate(todayDate).collectAsState(initial = 0)
+    val todayTimeMs by reelDao.observeTotalTimeForDate(todayDate).collectAsState(initial = 0L)
+    val todayAvgMs by reelDao.observeAvgTimeForDate(todayDate).collectAsState(initial = 0.0)
 
-    // Provide sensible, realistic defaults matching the reference design for fresh installs
-    val displayTodayCount = if (dbTodayCount > 0) dbTodayCount else 47
-    val displayTodayMinutes = if (dbTodayTimeMs > 0) (dbTodayTimeMs / 60000).toInt().coerceAtLeast(1) else 28
-    val displayMonthCount = if (dbMonthCount > 0) dbMonthCount else 342
-    val displayMonthMinutes = if (dbMonthTimeMs > 0) (dbMonthTimeMs / 60000).toInt().coerceAtLeast(1) else 226
+    val monthCount by reelDao.observeCountForMonth(currentMonthPrefix).collectAsState(initial = 0)
+    val monthTimeMs by reelDao.observeTotalTimeForMonth(currentMonthPrefix).collectAsState(initial = 0L)
+    val dailyStats by reelDao.observeDailyStats().collectAsState(initial = emptyList())
 
     var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
 
@@ -166,31 +160,31 @@ fun ScrollMeterDashboardRoot() {
                 )
             }
 
-            // 2. Today Card (Large Hero Card)
+            // 2. Today Card (Clean, Hero Card - 100% Real Data)
             item {
                 TodayHeroCard(
-                    todayCount = displayTodayCount,
-                    todayMinutes = displayTodayMinutes,
+                    todayCount = todayCount,
+                    todayTimeMs = todayTimeMs,
+                    todayAvgMs = todayAvgMs,
                     displayDate = displayDate
                 )
             }
 
-            // 3. This Month Card (Large Analytics Card)
+            // 3. This Month Card (Redesigned: Clean & Spacious without lines/mini-charts)
             item {
-                ThisMonthCard(
-                    monthCount = displayMonthCount,
-                    totalMinutes = displayMonthMinutes,
-                    displayMonth = displayMonth,
-                    todayCount = displayTodayCount
+                ThisMonthCardClean(
+                    monthCount = monthCount,
+                    monthTimeMs = monthTimeMs,
+                    displayMonth = displayMonth
                 )
             }
 
-            // 4. Last 7 Days Card (Large Bar Chart)
+            // 4. Last 7 Days Card (Real data from SQLite)
             item {
                 Last7DaysLargeCard(
                     dailyStats = dailyStats,
                     todayDate = todayDate,
-                    todayCount = displayTodayCount,
+                    todayCount = todayCount,
                     onViewAllClick = { selectedNav = NavDestination.HISTORY }
                 )
             }
@@ -320,14 +314,29 @@ fun ServiceStatusCard(
 }
 
 // ==========================================
-// 2. TODAY CARD (LARGE HERO CARD)
+// 2. TODAY CARD (CLEAN HERO CARD - 100% REAL)
 // ==========================================
 @Composable
 fun TodayHeroCard(
     todayCount: Int,
-    todayMinutes: Int,
+    todayTimeMs: Long,
+    todayAvgMs: Double,
     displayDate: String
 ) {
+    val totalSeconds = todayTimeMs / 1000
+    val minutes = (totalSeconds / 60).toInt()
+    val seconds = (totalSeconds % 60).toInt()
+
+    val watchTimeText = when {
+        minutes > 0 -> "${minutes}m ${seconds}s"
+        seconds > 0 -> "${seconds}s"
+        else -> "0m"
+    }
+
+    val avgText = if (todayAvgMs > 0) {
+        String.format(Locale.getDefault(), "%.1fs", todayAvgMs / 1000.0)
+    } else "0s"
+
     Surface(
         shape = RoundedCornerShape(26.dp),
         color = ScrollMeterColors.CardBackground,
@@ -337,90 +346,51 @@ fun TodayHeroCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 22.dp, start = 22.dp, end = 22.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Header: Today + Date & Comparison Badge
+            // Header: Today + Date (clean, no fake badges)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ScrollMeterColors.PurpleDarkTrack),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.CalendarMonth,
+                        contentDescription = null,
+                        tint = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column {
+                    Text(
+                        text = "Today",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ScrollMeterColors.PrimaryText
+                    )
+                    Text(
+                        text = displayDate,
+                        fontSize = 12.sp,
+                        color = ScrollMeterColors.MutedText
+                    )
+                }
+            }
+
+            // Middle: Dominant count & Circular Watch-Time widget
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(ScrollMeterColors.PurpleDarkTrack),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.CalendarMonth,
-                            contentDescription = null,
-                            tint = ScrollMeterColors.BrightPurple,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Column {
-                        Text(
-                            text = "Today",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ScrollMeterColors.PrimaryText
-                        )
-                        Text(
-                            text = displayDate,
-                            fontSize = 12.sp,
-                            color = ScrollMeterColors.MutedText
-                        )
-                    }
-                }
-
-                // Growth badge: +20% vs yesterday
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = ScrollMeterColors.GreenBadgeBg,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.GreenBadgeBorder)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.NorthEast,
-                            contentDescription = null,
-                            tint = ScrollMeterColors.ActiveGreen,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "+20%",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ScrollMeterColors.ActiveGreen
-                        )
-                        Text(
-                            text = "vs yesterday",
-                            fontSize = 11.sp,
-                            color = ScrollMeterColors.ActiveGreen.copy(alpha = 0.85f)
-                        )
-                    }
-                }
-            }
-
-            // Middle: Giant dominant count & Circular Watch-Time visualization
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Giant Dominant Reel Count
+                // Dominant Reel Count
                 Column {
                     AnimatedContent(
                         targetState = todayCount,
@@ -443,26 +413,62 @@ fun TodayHeroCard(
                     )
                 }
 
-                // Circular Watch-Time Visualization
+                // Circular Watch-Time Widget
                 CircularWatchTimeWidget(
-                    minutes = todayMinutes,
-                    progress = (todayMinutes.toFloat() / 60f).coerceIn(0.2f, 0.95f)
+                    displayTime = watchTimeText,
+                    progress = if (totalSeconds > 0) (totalSeconds.toFloat() / 3600f).coerceIn(0.08f, 1f) else 0.05f
                 )
             }
 
-            // Activity Line Wave throughout the day
-            ActivityWaveChart()
+            // Clean bottom metrics row: Avg per Reel
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = ScrollMeterColors.ElevatedCard,
+                border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.AvTimer,
+                            contentDescription = null,
+                            tint = ScrollMeterColors.BrightPurple,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Average watch time per Reel",
+                            fontSize = 12.sp,
+                            color = ScrollMeterColors.SecondaryText
+                        )
+                    }
+                    Text(
+                        text = "$avgText / Reel",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ScrollMeterColors.PrimaryText
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 fun CircularWatchTimeWidget(
-    minutes: Int,
+    displayTime: String,
     progress: Float
 ) {
     Box(
-        modifier = Modifier.size(100.dp),
+        modifier = Modifier.size(105.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -501,7 +507,7 @@ fun CircularWatchTimeWidget(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "$minutes min",
+                text = displayTime,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = ScrollMeterColors.PrimaryText
@@ -515,84 +521,26 @@ fun CircularWatchTimeWidget(
     }
 }
 
-@Composable
-fun ActivityWaveChart() {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(65.dp)
-        ) {
-            val width = size.width
-            val height = size.height
-
-            val path = Path()
-            path.moveTo(0f, height * 0.85f)
-            path.cubicTo(width * 0.12f, height * 0.85f, width * 0.20f, height * 0.60f, width * 0.28f, height * 0.62f)
-            path.cubicTo(width * 0.35f, height * 0.64f, width * 0.40f, height * 0.38f, width * 0.48f, height * 0.42f)
-            path.cubicTo(width * 0.55f, height * 0.46f, width * 0.62f, height * 0.25f, width * 0.70f, height * 0.30f)
-            path.cubicTo(width * 0.78f, height * 0.35f, width * 0.85f, height * 0.68f, width * 0.92f, height * 0.70f)
-            path.cubicTo(width * 0.96f, height * 0.72f, width * 0.98f, height * 0.82f, width, height * 0.85f)
-
-            // Closed fill path for subtle glowing gradient area
-            val fillPath = Path()
-            fillPath.addPath(path)
-            fillPath.lineTo(width, height)
-            fillPath.lineTo(0f, height)
-            fillPath.close()
-
-            drawPath(
-                path = fillPath,
-                brush = Brush.verticalGradient(
-                    listOf(
-                        ScrollMeterColors.BrightPurple.copy(alpha = 0.42f),
-                        ScrollMeterColors.PurpleGlow.copy(alpha = 0.12f),
-                        Color.Transparent
-                    )
-                )
-            )
-
-            // Glowing top line stroke
-            drawPath(
-                path = path,
-                brush = Brush.horizontalGradient(
-                    listOf(ScrollMeterColors.Purple, ScrollMeterColors.BrightPurple)
-                ),
-                style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
-            )
-        }
-
-        Spacer(Modifier.height(6.dp))
-
-        // Time labels: 12AM, 6AM, 12PM, 6PM, 12AM
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            listOf("12AM", "6AM", "12PM", "6PM", "12AM").forEach { label ->
-                Text(
-                    text = label,
-                    fontSize = 10.sp,
-                    color = ScrollMeterColors.MutedText
-                )
-            }
-        }
-    }
-}
-
 // ==========================================
-// 3. THIS MONTH CARD
+// 3. THIS MONTH CARD (REDESIGNED: CLEAN & NO FAKE MINI-CHARTS)
 // ==========================================
 @Composable
-fun ThisMonthCard(
+fun ThisMonthCardClean(
     monthCount: Int,
-    totalMinutes: Int,
-    displayMonth: String,
-    todayCount: Int
+    monthTimeMs: Long,
+    displayMonth: String
 ) {
-    val hours = totalMinutes / 60
-    val remainingMins = totalMinutes % 60
-    val durationFormatted = if (hours > 0) "${hours}h ${remainingMins}m" else "${totalMinutes}m"
+    val totalSeconds = monthTimeMs / 1000
+    val totalMins = totalSeconds / 60
+    val hours = totalMins / 60
+    val remainingMins = totalMins % 60
+
+    val durationText = when {
+        hours > 0 -> "${hours}h ${remainingMins}m"
+        totalMins > 0 -> "${totalMins}m"
+        totalSeconds > 0 -> "${totalSeconds}s"
+        else -> "0m"
+    }
 
     Surface(
         shape = RoundedCornerShape(26.dp),
@@ -604,222 +552,115 @@ fun ThisMonthCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Header: This Month + Month & Growth Badge
+            // Header: This Month + Month Name (clean, no fake +18% badge)
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(ScrollMeterColors.PurpleDarkTrack),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.DateRange,
-                            contentDescription = null,
-                            tint = ScrollMeterColors.BrightPurple,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Column {
-                        Text(
-                            text = "This Month",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ScrollMeterColors.PrimaryText
-                        )
-                        Text(
-                            text = displayMonth,
-                            fontSize = 12.sp,
-                            color = ScrollMeterColors.MutedText
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = ScrollMeterColors.GreenBadgeBg,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.GreenBadgeBorder)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.NorthEast,
-                            contentDescription = null,
-                            tint = ScrollMeterColors.ActiveGreen,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "18%",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ScrollMeterColors.ActiveGreen
-                        )
-                        Text(
-                            text = "vs last month",
-                            fontSize = 11.sp,
-                            color = ScrollMeterColors.ActiveGreen.copy(alpha = 0.85f)
-                        )
-                    }
-                }
-            }
-
-            // Metrics Row: 342 Reels watched | 3h 46m Total watch time
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "$monthCount",
-                        fontSize = 38.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = (-1).sp,
-                        color = ScrollMeterColors.PrimaryText
-                    )
-                    Text(
-                        text = "Reels watched",
-                        fontSize = 13.sp,
-                        color = ScrollMeterColors.SecondaryText
-                    )
-                }
-
-                // Vertical separator
                 Box(
                     modifier = Modifier
-                        .width(1.dp)
-                        .height(44.dp)
-                        .background(ScrollMeterColors.Border)
-                )
-
-                Column(
-                    modifier = Modifier
-                        .weight(1.2f)
-                        .padding(start = 20.dp)
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ScrollMeterColors.PurpleDarkTrack),
+                    contentAlignment = Alignment.Center
                 ) {
+                    Icon(
+                        Icons.Default.DateRange,
+                        contentDescription = null,
+                        tint = ScrollMeterColors.BrightPurple,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column {
                     Text(
-                        text = durationFormatted,
-                        fontSize = 24.sp,
+                        text = "This Month",
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = ScrollMeterColors.PrimaryText
                     )
                     Text(
-                        text = "Total watch time",
+                        text = displayMonth,
                         fontSize = 12.sp,
                         color = ScrollMeterColors.MutedText
                     )
                 }
             }
 
-            // Monthly Daily Mini Bar Chart
-            MonthlyMiniBarChart(todayCount = todayCount)
-        }
-    }
-}
-
-@Composable
-fun MonthlyMiniBarChart(todayCount: Int) {
-    // 30 days visualization
-    val heights = remember {
-        listOf(
-            14, 18, 26, 12, 20, 24, 32, 16, 28, 22,
-            18, 26, 38, 24, 16, 22, 20, 28, 34, 22,
-            16, 20, 28, 26, 36, 30, 18, 24, 38, 48
-        )
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(65.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
+            // Dual Stats Layout (Clean & Spacious)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                heights.forEachIndexed { index, h ->
-                    val isToday = index == heights.lastIndex
-
+                // Total Reels Watched this month
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = ScrollMeterColors.ElevatedCard,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border.copy(alpha = 0.6f)),
+                    modifier = Modifier.weight(1f)
+                ) {
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(9.dp)
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (isToday) {
-                            // Badge with count above today
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF281E48),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.BrightPurple.copy(alpha = 0.5f))
-                            ) {
-                                Text(
-                                    text = "$todayCount",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = ScrollMeterColors.PrimaryText,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                )
-                            }
-                            Spacer(Modifier.height(3.dp))
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .width(6.5.dp)
-                                .height(h.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(
-                                    if (isToday) {
-                                        Brush.verticalGradient(
-                                            listOf(ScrollMeterColors.BrightPurple, ScrollMeterColors.PurpleGlow)
-                                        )
-                                    } else {
-                                        Brush.verticalGradient(
-                                            listOf(Color(0xFF5B3CA0), Color(0xFF2C1D4E))
-                                        )
-                                    }
-                                )
+                        Text(
+                            text = "Reels Watched",
+                            fontSize = 12.sp,
+                            color = ScrollMeterColors.SecondaryText
+                        )
+                        Text(
+                            text = "$monthCount",
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Black,
+                            color = ScrollMeterColors.PrimaryText
                         )
                     }
                 }
-            }
-        }
 
-        Spacer(Modifier.height(8.dp))
-
-        // Axis Day Labels: 1, 5, 10, 15, 20, 25, 30
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            listOf("1", "5", "10", "15", "20", "25", "30").forEach { day ->
-                Text(
-                    text = day,
-                    fontSize = 10.sp,
-                    color = ScrollMeterColors.MutedText
-                )
+                // Total Watch Time this month
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = ScrollMeterColors.ElevatedCard,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ScrollMeterColors.Border.copy(alpha = 0.6f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Schedule,
+                                contentDescription = null,
+                                tint = ScrollMeterColors.BrightPurple,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Total Time",
+                                fontSize = 12.sp,
+                                color = ScrollMeterColors.SecondaryText
+                            )
+                        }
+                        Text(
+                            text = durationText,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ScrollMeterColors.PrimaryText
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 // ==========================================
-// 4. LAST 7 DAYS CARD (LARGE BAR CHART)
+// 4. LAST 7 DAYS CARD (100% REAL ROOM DATA)
 // ==========================================
 @Composable
 fun Last7DaysLargeCard(
@@ -828,8 +669,14 @@ fun Last7DaysLargeCard(
     todayCount: Int,
     onViewAllClick: () -> Unit
 ) {
+    // Pure, real historical data from Room
     val past7Days = remember(dailyStats, todayDate, todayCount) {
-        generatePast7Days(dailyStats, todayDate, todayCount)
+        generateRealPast7Days(dailyStats, todayDate, todayCount)
+    }
+
+    val maxCount = remember(past7Days) {
+        val max = past7Days.maxOfOrNull { it.count } ?: 0
+        if (max < 10) 10 else max
     }
 
     Surface(
@@ -884,18 +731,18 @@ fun Last7DaysLargeCard(
                 }
             }
 
-            // Large 7-Day Chart Area with Y-axis guides
+            // Real 7-Day Chart Area with Y-axis guides
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp)
             ) {
-                // Background Y-Axis dashed guideline marks: 60, 40, 20, 0
+                // Background Y-Axis dashed guideline marks
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    listOf("60", "40", "20", "0").forEach { v ->
+                    listOf("$maxCount", "${maxCount * 2 / 3}", "${maxCount / 3}", "0").forEach { v ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -904,7 +751,7 @@ fun Last7DaysLargeCard(
                                 text = v,
                                 fontSize = 10.sp,
                                 color = ScrollMeterColors.MutedText.copy(alpha = 0.8f),
-                                modifier = Modifier.width(20.dp)
+                                modifier = Modifier.width(24.dp)
                             )
                             HorizontalDivider(
                                 color = ScrollMeterColors.Border.copy(alpha = 0.35f),
@@ -915,26 +762,29 @@ fun Last7DaysLargeCard(
                     }
                 }
 
-                // 7 Large Vertical Bars
+                // 7 Real Vertical Bars
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(start = 24.dp, bottom = 4.dp),
+                        .padding(start = 28.dp, bottom = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Bottom
                 ) {
                     past7Days.forEach { item ->
                         val isToday = item.isToday
-                        val barHeightFactor = (item.count.toFloat() / 60f).coerceIn(0.18f, 1f)
+                        // Height proportional to actual real count in SQLite
+                        val barHeightFactor = if (maxCount > 0) {
+                            (item.count.toFloat() / maxCount.toFloat()).coerceIn(if (item.count > 0) 0.12f else 0.04f, 1f)
+                        } else 0.04f
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Bottom,
                             modifier = Modifier.width(36.dp)
                         ) {
-                            // Count label above bar
+                            // Real count label above bar
                             Text(
-                                text = "${item.count}",
+                                text = if (item.count > 0) "${item.count}" else "0",
                                 fontSize = 12.sp,
                                 fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
                                 color = if (isToday) ScrollMeterColors.PrimaryText else ScrollMeterColors.SecondaryText
@@ -942,7 +792,7 @@ fun Last7DaysLargeCard(
 
                             Spacer(Modifier.height(5.dp))
 
-                            // Thick Rounded Bar
+                            // Rounded Bar
                             Box(
                                 modifier = Modifier
                                     .width(26.dp)
@@ -1090,12 +940,9 @@ fun ScrollMeterNavItem(
 // ==========================================
 data class DayChartItem(val label: String, val count: Int, val isToday: Boolean)
 
-fun generatePast7Days(dailyStats: List<DayStat>, todayDate: String, todayCount: Int): List<DayChartItem> {
+fun generateRealPast7Days(dailyStats: List<DayStat>, todayDate: String, todayCount: Int): List<DayChartItem> {
     val statsMap = dailyStats.associate { it.date to it.count }.toMutableMap()
     statsMap[todayDate] = todayCount
-
-    // Realistic sample historical counts matching the visual reference (18, 25, 32, 28, 41, 36, 47)
-    val fallbackCounts = listOf(18, 25, 32, 28, 41, 36, todayCount)
 
     val result = mutableListOf<DayChartItem>()
     for (i in 6 downTo 0) {
@@ -1104,7 +951,8 @@ fun generatePast7Days(dailyStats: List<DayStat>, todayDate: String, todayCount: 
         val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(loopCal.time)
         val dayLabel = if (i == 0) "Today" else SimpleDateFormat("MMM d", Locale.getDefault()).format(loopCal.time)
         
-        val count = statsMap[dateKey] ?: fallbackCounts[6 - i]
+        // Pure real data: if 0, it is 0
+        val count = statsMap[dateKey] ?: 0
         result.add(DayChartItem(label = dayLabel, count = count, isToday = (i == 0)))
     }
     return result
