@@ -26,7 +26,6 @@ class InstagramAccessibilityService : AccessibilityService() {
     private var liveTickerJob: Job? = null
     private lateinit var database: AppDatabase
     private lateinit var notchOverlayManager: NotchOverlayManager
-    private lateinit var liveNotificationManager: LiveNotificationManager
 
     // Session tracking
     private var currentSessionId: Long = 0L
@@ -67,7 +66,6 @@ class InstagramAccessibilityService : AccessibilityService() {
         super.onCreate()
         database = AppDatabase.getInstance(applicationContext)
         notchOverlayManager = NotchOverlayManager(this)
-        liveNotificationManager = LiveNotificationManager(this)
     }
 
     override fun onServiceConnected() {
@@ -98,7 +96,6 @@ class InstagramAccessibilityService : AccessibilityService() {
         liveTickerJob?.cancel()
         dwellJob?.cancel()
         notchOverlayManager.destroy()
-        liveNotificationManager.cancel()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
     }
@@ -113,12 +110,18 @@ class InstagramAccessibilityService : AccessibilityService() {
         }
 
         if (eventPkg != INSTAGRAM_PKG) {
-            commitActiveReelTime()
-            liveTickerJob?.cancel()
-            dwellJob?.cancel()
-            activeCreator = ""
-            notchOverlayManager.hide()
-            liveNotificationManager.cancel()
+            // Only hide and commit if the user actually navigated away to a different app window
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                val activePkg = rootInActiveWindow?.packageName?.toString() ?: ""
+                if (activePkg.isNotEmpty() && activePkg != INSTAGRAM_PKG && activePkg != packageName && activePkg != "com.scrollmeter.app") {
+                    commitActiveReelTime()
+                    liveTickerJob?.cancel()
+                    dwellJob?.cancel()
+                    activeCreator = ""
+                    notchOverlayManager.hide()
+                }
+            }
+            // Do NOT wipe activeCreator on transient non-Instagram events (status bar, notifications, keyboard, etc.)
             return
         }
 
@@ -135,12 +138,6 @@ class InstagramAccessibilityService : AccessibilityService() {
                 return
             }
             if (rootPkg != INSTAGRAM_PKG) {
-                commitActiveReelTime()
-                liveTickerJob?.cancel()
-                dwellJob?.cancel()
-                activeCreator = ""
-                notchOverlayManager.hide()
-                liveNotificationManager.cancel()
                 return
             }
 
@@ -366,7 +363,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
                 withContext(Dispatchers.Main) {
                     notchOverlayManager.showOrUpdate(sessionDuration, sessionReels)
-                    liveNotificationManager.showOrUpdate(sessionDuration, sessionReels)
                 }
 
                 delay(1000L)
@@ -446,7 +442,6 @@ class InstagramAccessibilityService : AccessibilityService() {
         liveTickerJob?.cancel()
         dwellJob?.cancel()
         notchOverlayManager.hide()
-        liveNotificationManager.cancel()
         Log.w(TAG, "ScrollMeter Accessibility Service Interrupted")
     }
 }
