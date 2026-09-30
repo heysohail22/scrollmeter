@@ -88,7 +88,9 @@ class InstagramAccessibilityService : AccessibilityService() {
             "view", "views", "insights", "boost", "boost post", "home", "notifications",
             "interested", "about", "account", "manage", "link", "copy", "menu",
             "options", "transparency", "details", "control", "controls", "why",
-            "sequence", "unfollow", "mute", "block", "restrict", "info", "settings", "not"
+            "sequence", "unfollow", "mute", "block", "restrict", "info", "settings", "not",
+            "turn sound on", "turn sound off", "sound on", "sound off", "sound", "music",
+            "unmute", "audio muted", "audio unmuted"
         )
 
         fun getTodayDateString(): String {
@@ -251,7 +253,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                 isReelsSurface = true
             }
 
-            // 3. Extract Creator, Audio, and Caption from content descriptions
+            // 3. Extract Creator & Audio & Caption from content description
             if (desc.isNotEmpty()) {
                 if (desc.startsWith("Reel by ", ignoreCase = true)) {
                     isReelsSurface = true
@@ -260,21 +262,19 @@ class InstagramAccessibilityService : AccessibilityService() {
                     if (isValidUsername(creator)) {
                         detectedCreator = creator
                     }
-                    if (raw.contains("•")) {
-                        val audioPart = raw.substringAfter("•").substringBefore(".").substringBefore(",").trim()
-                        if (audioPart.isNotEmpty() && !SYSTEM_BLACKLIST.contains(audioPart.lowercase())) {
-                            detectedAudio = audioPart.take(80)
+                    val audioCandidate = when {
+                        raw.contains("•") -> raw.substringAfter("•")
+                        raw.contains("Audio:", ignoreCase = true) -> raw.substringAfter("Audio:")
+                        raw.contains("audio:", ignoreCase = true) -> raw.substringAfter("audio:")
+                        else -> ""
+                    }.substringBefore(" Double tap").substringBefore(". Double").substringBefore(" double tap").trim()
+
+                    if (audioCandidate.isNotEmpty() && detectedAudio.isEmpty()) {
+                        val clean = cleanAudioTitle(audioCandidate, detectedCreator)
+                        if (clean.isNotEmpty()) {
+                            detectedAudio = clean
+                            Log.i(TAG, "Captured AudioTrack from Reel by: '$detectedAudio'")
                         }
-                    }
-                } else if (desc.contains(" · ") ||
-                    desc.contains("Original audio", ignoreCase = true) ||
-                    desc.startsWith("Audio:", ignoreCase = true) ||
-                    (desc.contains("audio", ignoreCase = true) && desc.length > 5 && !desc.equals("Audio", ignoreCase = true))
-                ) {
-                    val cleanAudio = desc.removePrefix("Audio:").removePrefix("audio:").trim()
-                    if (cleanAudio.isNotEmpty() && !SYSTEM_BLACKLIST.contains(cleanAudio.lowercase()) && cleanAudio != detectedCreator) {
-                        detectedAudio = cleanAudio.take(80)
-                        Log.i(TAG, "Captured AudioTrack from desc: '$detectedAudio'")
                     }
                 } else if (detectedCaption.isEmpty() && isCaptionForCurrentReel(desc, detectedCreator) && desc != detectedAudio) {
                     detectedCaption = cleanCaptionText(desc, detectedCreator)
@@ -293,8 +293,17 @@ class InstagramAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // 5. Extract caption & audio text & candidate usernames (only outside sheets/menus)
-            if (text.isNotEmpty() && !isModalOrSheetOpen) {
+            // 5. Extract audio track from this node if not yet detected
+            if (detectedAudio.isEmpty()) {
+                val candidateAudio = extractAudioTrack(desc, text, viewId, detectedCreator)
+                if (candidateAudio.isNotEmpty()) {
+                    detectedAudio = candidateAudio
+                    Log.i(TAG, "Captured AudioTrack: '$detectedAudio' (from viewId='$viewId')")
+                }
+            }
+
+            // 6. Extract caption & candidate usernames (only outside sheets/menus)
+            if (text.isNotEmpty() && !isModalOrSheetOpen && text != detectedAudio) {
                 val isSystemLabel = SYSTEM_BLACKLIST.contains(text.lowercase()) ||
                         text.startsWith("Like number", ignoreCase = true) ||
                         text.startsWith("Comment number", ignoreCase = true) ||
@@ -309,25 +318,12 @@ class InstagramAccessibilityService : AccessibilityService() {
                         text.matches(Regex(".*and \\d+ others?.*", RegexOption.IGNORE_CASE)) ||
                         text.all { it.isDigit() || it == ',' || it == '.' || it == 'K' || it == 'M' || it == ' ' }
 
-                val isMusicView = viewId.contains("music", ignoreCase = true) ||
-                        viewId.contains("audio", ignoreCase = true)
-
-                val isAudioText = isMusicView ||
-                        text.contains("Original audio", ignoreCase = true) ||
-                        (text.contains(" · ") && text.length in 4..80 && !isSystemLabel)
-
-                if (isAudioText && detectedAudio.isEmpty()) {
-                    val cleanAudio = text.trim()
-                    if (cleanAudio.isNotEmpty() && !SYSTEM_BLACKLIST.contains(cleanAudio.lowercase())) {
-                        detectedAudio = cleanAudio.take(80)
-                        Log.i(TAG, "Found AudioTrack text: '$detectedAudio' from viewId='$viewId'")
-                    }
-                } else if (!isSystemLabel && !viewId.contains("comment", ignoreCase = true)) {
-                    if (viewId.contains("caption", ignoreCase = true)) {
+                if (!isSystemLabel && !viewId.contains("comment", ignoreCase = true)) {
+                    if (viewId.contains("caption", ignoreCase = true) || viewId.contains("description", ignoreCase = true)) {
                         if (isCaptionForCurrentReel(text, detectedCreator)) {
                             detectedCaption = cleanCaptionText(text, detectedCreator)
                         }
-                    } else if (text.length > 15 && detectedCaption.isEmpty() && text != detectedAudio) {
+                    } else if (text.length > 15 && detectedCaption.isEmpty()) {
                         if (isCaptionForCurrentReel(text, detectedCreator)) {
                             detectedCaption = cleanCaptionText(text, detectedCreator)
                         }
@@ -371,11 +367,21 @@ class InstagramAccessibilityService : AccessibilityService() {
             // Update last activity timestamp
             lastReelActivityTimestamp = currentTime
 
+            var hasNewMetadata = false
+            if (detectedAudio.isNotEmpty() && activeAudio.isEmpty()) {
+                activeAudio = detectedAudio
+                hasNewMetadata = true
+            }
+            if (detectedCaption.isNotEmpty() && activeCaption.isEmpty()) {
+                activeCaption = detectedCaption
+                hasNewMetadata = true
+            }
+
             // Enrich caption/audio if they loaded after initial detection
-            if (activeRecordId > 0L && (detectedAudio.isNotEmpty() || detectedCaption.isNotEmpty())) {
+            if (activeRecordId > 0L && hasNewMetadata) {
                 serviceScope.launch(Dispatchers.IO) {
                     try {
-                        database.reelDao().updateMetadataIfEmpty(activeRecordId, detectedCaption, detectedAudio)
+                        database.reelDao().updateMetadataIfEmpty(activeRecordId, activeCaption, activeAudio)
                     } catch (_: Exception) {}
                 }
             }
@@ -393,6 +399,59 @@ class InstagramAccessibilityService : AccessibilityService() {
         )
     }
 
+    private fun cleanAudioTitle(raw: String, creator: String): String {
+        var a = raw.trim()
+            .removePrefix("Audio:")
+            .removePrefix("audio:")
+            .removePrefix("Music:")
+            .removePrefix("music:")
+            .removePrefix("Sound:")
+            .removePrefix("sound:")
+            .removePrefix("Song:")
+            .removePrefix("song:")
+            .removePrefix("♪")
+            .removePrefix("♫")
+            .trim()
+
+        if (creator.isNotEmpty()) {
+            if (a.startsWith("$creator · ", ignoreCase = true)) {
+                a = a.removePrefix("$creator · ").trim()
+            } else if (a.startsWith("$creator • ", ignoreCase = true)) {
+                a = a.removePrefix("$creator • ").trim()
+            }
+        }
+
+        val lower = a.lowercase()
+        if (SYSTEM_BLACKLIST.contains(lower) || lower.startsWith("turn sound") ||
+            lower.contains("sound on") || lower.contains("sound off") || lower == "audio" || lower == "music"
+        ) {
+            return ""
+        }
+        return a.take(80)
+    }
+
+    private fun extractAudioTrack(desc: String, text: String, viewId: String, creator: String): String {
+        val isMusicViewId = viewId.contains("music", ignoreCase = true) ||
+                viewId.contains("audio", ignoreCase = true) ||
+                viewId.contains("sound", ignoreCase = true) ||
+                viewId.contains("track", ignoreCase = true)
+
+        val candidate = when {
+            desc.isNotEmpty() && (isMusicViewId || desc.startsWith("Audio:", ignoreCase = true) ||
+                    desc.startsWith("Music:", ignoreCase = true) || desc.startsWith("Sound:", ignoreCase = true) ||
+                    desc.contains(" · ") || desc.contains(" • ") || desc.contains("Original audio", ignoreCase = true)) -> desc
+            text.isNotEmpty() && (isMusicViewId || text.startsWith("Audio:", ignoreCase = true) ||
+                    text.startsWith("Music:", ignoreCase = true) || text.startsWith("Sound:", ignoreCase = true) ||
+                    text.contains(" · ") || text.contains(" • ") || text.contains("Original audio", ignoreCase = true)) -> text
+            isMusicViewId && text.isNotBlank() -> text
+            isMusicViewId && desc.isNotBlank() -> desc
+            else -> ""
+        }
+
+        if (candidate.isBlank()) return ""
+        return cleanAudioTitle(candidate, creator)
+    }
+
     private fun isValidUsername(name: String): Boolean {
         if (name.length !in 2..30) return false
         if (SYSTEM_BLACKLIST.contains(name.lowercase())) return false
@@ -407,6 +466,9 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (trimmed.contains("View likes", ignoreCase = true)) return false
         if (trimmed.contains("View comments", ignoreCase = true)) return false
         if (trimmed.startsWith("Follow", ignoreCase = true)) return false
+        if (trimmed.contains("Turn sound", ignoreCase = true)) return false
+        if (trimmed.contains("Sound on", ignoreCase = true)) return false
+        if (trimmed.contains("Sound off", ignoreCase = true)) return false
         if (trimmed.contains("Consistency Wins", ignoreCase = true) && !creator.equals("zeelabpharmacy", ignoreCase = true)) return false
         if (trimmed.contains("zeelabpharmacy", ignoreCase = true) && !creator.equals("zeelabpharmacy", ignoreCase = true)) return false
         if (SYSTEM_BLACKLIST.contains(trimmed.lowercase())) return false
@@ -464,13 +526,16 @@ class InstagramAccessibilityService : AccessibilityService() {
 
                 // Ensure an active session exists (or create one)
                 ensureActiveSession(transitionTime) { sessionId ->
+                    val finalCaption = activeCaption.ifBlank { caption }
+                    val finalAudio = activeAudio.ifBlank { audioName }
+
                     val record = ReelRecord(
                         sessionId = sessionId,
                         dateString = getTodayDateString(),
                         timestamp = transitionTime,
                         creator = pageName,
-                        caption = caption,
-                        audioTrack = audioName,
+                        caption = finalCaption,
+                        audioTrack = finalAudio,
                         dwellTimeMs = MIN_DWELL_TIME_MS
                     )
 
@@ -479,6 +544,11 @@ class InstagramAccessibilityService : AccessibilityService() {
                             val rowId = database.reelDao().insert(record)
                             activeRecordId = rowId
                             database.reelDao().refreshSessionStats(sessionId, System.currentTimeMillis())
+
+                            // If newer metadata arrived right as row was inserting
+                            if (activeCaption.isNotEmpty() || activeAudio.isNotEmpty()) {
+                                database.reelDao().updateMetadataIfEmpty(rowId, activeCaption, activeAudio)
+                            }
 
                             // Launch live ticker to continually update dwell time every second
                             withContext(Dispatchers.Main) {
