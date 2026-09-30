@@ -22,6 +22,14 @@ abstract class AppDatabase : RoomDatabase() {
                     "scrollmeter.db"
                 )
                     .fallbackToDestructiveMigration()
+                    .addCallback(object : RoomDatabase.Callback() {
+                        override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            try {
+                                db.execSQL("UPDATE reel_records SET caption = '' WHERE caption LIKE '%Reshare number%' OR caption LIKE '%Comment number%' OR caption LIKE '%Like number%' OR caption LIKE '%posts tagged%'")
+                            } catch (_: Exception) {}
+                        }
+                    })
                     .build()
                 INSTANCE = instance
                 instance
