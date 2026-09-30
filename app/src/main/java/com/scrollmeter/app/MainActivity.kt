@@ -238,7 +238,7 @@ fun ScrollMeterMilestone1Screen() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                     Text(
                         text = "Status: $statusMessage",
@@ -287,10 +287,28 @@ fun ScrollMeterMilestone1Screen() {
 }
 
 private fun checkAccessibilityEnabled(context: Context): Boolean {
-    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
-    val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC)
-    val expectedId = "${context.packageName}/${InstagramAccessibilityService::class.java.canonicalName}"
-    return enabledServices.any { it.id.equals(expectedId, ignoreCase = true) }
+    // Check in-memory service status first
+    if (ReelTrackerState.isServiceRunning.value) return true
+
+    // Check system setting string directly
+    try {
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: ""
+        if (enabledServices.contains("com.scrollmeter.app", ignoreCase = true)) {
+            return true
+        }
+    } catch (_: Exception) {}
+
+    // Fallback: Check AccessibilityManager
+    return try {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
+        val enabledList = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        enabledList.any { it.id.contains("com.scrollmeter.app", ignoreCase = true) }
+    } catch (_: Exception) {
+        false
+    }
 }
 
 @Composable

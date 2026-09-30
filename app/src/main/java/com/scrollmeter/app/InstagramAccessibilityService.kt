@@ -1,6 +1,7 @@
 package com.scrollmeter.app
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -28,11 +29,25 @@ class InstagramAccessibilityService : AccessibilityService() {
         const val MIN_DWELL_TIME_MS = 1200L
         
         // Throttle node inspection to avoid CPU overhead
-        private const val SCAN_THROTTLE_MS = 250L
+        private const val SCAN_THROTTLE_MS = 200L
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        try {
+            val info = serviceInfo ?: AccessibilityServiceInfo()
+            info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED
+            info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            info.notificationTimeout = 100
+            serviceInfo = info
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configuring serviceInfo", e)
+        }
+
         Log.d(TAG, "ScrollMeter Accessibility Service Connected")
         ReelTrackerState.setServiceRunning(true)
         ReelTrackerState.updateStatus("Accessibility Service active and monitoring Instagram")
@@ -69,11 +84,6 @@ class InstagramAccessibilityService : AccessibilityService() {
             inspectInstagramTree(rootNode, currentTime)
         } catch (e: Exception) {
             Log.e(TAG, "Error inspecting node tree", e)
-        } finally {
-            // AccessibilityNodeInfo instances can be recycled by the system
-            try {
-                rootNode.recycle()
-            } catch (_: Exception) {}
         }
     }
 
@@ -111,7 +121,6 @@ class InstagramAccessibilityService : AccessibilityService() {
         }
 
         // Generate a fingerprint representing the current Reel in view.
-        // In Instagram Reels, typical text tokens are author handle, caption excerpt, or audio title.
         val candidateFingerprint = deriveReelFingerprint(texts)
 
         if (candidateFingerprint.isBlank()) {
@@ -134,7 +143,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         if (filtered.isEmpty()) return ""
 
-        // Usually the first 1-2 distinct text items identify the creator handle and/or audio
         val primary = filtered.firstOrNull() ?: ""
         val secondary = filtered.getOrNull(1)?.take(30) ?: ""
         
@@ -175,9 +183,6 @@ class InstagramAccessibilityService : AccessibilityService() {
             val child = node.getChild(i)
             if (child != null) {
                 traverseNodes(child, depth + 1, maxDepth, onNode)
-                try {
-                    child.recycle()
-                } catch (_: Exception) {}
             }
         }
     }
