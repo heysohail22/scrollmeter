@@ -14,11 +14,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
@@ -30,11 +33,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.scrollmeter.app.data.AppDatabase
+import com.scrollmeter.app.data.DayStat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
@@ -43,7 +52,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ScrollMeterTheme {
-                ScrollMeterMilestone1Screen()
+                ScrollMeterDashboardScreen()
             }
         }
     }
@@ -51,16 +60,27 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScrollMeterMilestone1Screen() {
+fun ScrollMeterDashboardScreen() {
     val context = LocalContext.current
-    val reelCount by ReelTrackerState.reelCount.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+    val database = remember { AppDatabase.getInstance(context) }
+    val reelDao = database.reelDao()
+
+    val todayDate = remember { getFormattedDate(0) }
+    val yesterdayDate = remember { getFormattedDate(-1) }
+
+    // Live Room Database flows
+    val todayCount by reelDao.observeCountForDate(todayDate).collectAsState(initial = 0)
+    val yesterdayCount by reelDao.observeCountForDate(yesterdayDate).collectAsState(initial = 0)
+    val totalCount by reelDao.observeTotalCount().collectAsState(initial = 0)
+    val dailyStats by reelDao.observeDailyStats().collectAsState(initial = emptyList())
+
+    // In-memory diagnostics
     val currentFingerprint by ReelTrackerState.currentFingerprint.collectAsState()
-    val isServiceRunning by ReelTrackerState.isServiceRunning.collectAsState()
     val statusMessage by ReelTrackerState.lastStatusMessage.collectAsState()
 
     var isAccessibilityEnabledInSystem by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
 
-    // Re-check permission status when user returns to ScrollMeter
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isAccessibilityEnabledInSystem = checkAccessibilityEnabled(context)
     }
@@ -81,216 +101,337 @@ fun ScrollMeterMilestone1Screen() {
             )
         }
     ) { innerPadding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
             // Service status card
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isAccessibilityEnabledInSystem)
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                    else
-                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isAccessibilityEnabledInSystem)
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        else
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isAccessibilityEnabledInSystem) Color(0xFF10B981) else Color(0xFFEF4444)
-                                )
-                        )
-                        Column {
-                            Text(
-                                text = if (isAccessibilityEnabledInSystem) "Service Active" else "Service Disabled",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp
-                            )
-                            Text(
-                                text = if (isAccessibilityEnabledInSystem)
-                                    "Ready to detect Instagram Reels"
-                                else
-                                    "Permission required to detect Reels",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    if (!isAccessibilityEnabledInSystem) {
-                        FilledTonalButton(
-                            onClick = {
-                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Enable", fontSize = 12.sp)
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isAccessibilityEnabledInSystem) Color(0xFF10B981) else Color(0xFFEF4444)
+                                    )
+                            )
+                            Column {
+                                Text(
+                                    text = if (isAccessibilityEnabledInSystem) "Service Active" else "Service Disabled",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 15.sp
+                                )
+                                Text(
+                                    text = if (isAccessibilityEnabledInSystem)
+                                        "Saving Reels to SQLite database"
+                                    else
+                                        "Enable service to track Reels",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (!isAccessibilityEnabledInSystem) {
+                            FilledTonalButton(
+                                onClick = {
+                                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Enable", fontSize = 12.sp)
+                            }
                         }
                     }
                 }
             }
 
-            // Big Live Counter Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 36.dp, horizontal = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            // Big Live Counter Card (Today)
+            item {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "REELS WATCHED",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    AnimatedContent(
-                        targetState = reelCount,
-                        transitionSpec = { fadeIn() togetherWith fadeOut() },
-                        label = "reelCounterAnimation"
-                    ) { count ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 28.dp, horizontal = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            text = "$count",
-                            fontSize = 72.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = (-1.5).sp,
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = "TODAY'S REELS",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                    }
 
-                    Text(
-                        text = "Dwell threshold: 1.2s",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.outline
-                    )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        AnimatedContent(
+                            targetState = todayCount,
+                            transitionSpec = { fadeIn() togetherWith fadeOut() },
+                            label = "todayCounterAnim"
+                        ) { count ->
+                            Text(
+                                text = "$count",
+                                fontSize = 68.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = (-1.5).sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            QuickStatBadge(title = "Yesterday", value = "$yesterdayCount")
+                            QuickStatBadge(title = "All Time", value = "$totalCount")
+                        }
+                    }
+                }
+            }
+
+            // Daily History Card (Past Days Breakdown)
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.CalendarToday,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Daily History (SQLite)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+
+                        if (dailyStats.isEmpty()) {
+                            Text(
+                                text = "No past history recorded yet. Watch Reels to build daily records!",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        } else {
+                            dailyStats.forEach { stat ->
+                                DailyStatRow(stat = stat, today = todayDate, yesterday = yesterdayDate)
+                            }
+                        }
+                    }
                 }
             }
 
             // Live Diagnostics Card
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Visibility,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Visibility,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Current Detected Reel",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+
                         Text(
-                            text = "Current Detected Reel",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            text = currentFingerprint,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                        Text(
+                            text = "Status: $statusMessage",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.outline
                         )
                     }
-
-                    Text(
-                        text = currentFingerprint,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                    Text(
-                        text = "Status: $statusMessage",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.outline
-                    )
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
-
             // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { ReelTrackerState.resetCount() },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Reset Count")
-                }
+                    OutlinedButton(
+                        onClick = {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                reelDao.clearAll()
+                                ReelTrackerState.resetCount()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Clear DB")
+                    }
 
-                Button(
-                    onClick = {
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.instagram.android")
-                        if (launchIntent != null) {
-                            context.startActivity(launchIntent)
-                        } else {
-                            ReelTrackerState.updateStatus("Instagram is not installed on this device")
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Open Instagram")
+                    Button(
+                        onClick = {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.instagram.android")
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Open Instagram")
+                    }
                 }
             }
         }
     }
 }
 
+@Composable
+fun QuickStatBadge(title: String, value: String) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "$title:",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.outline
+            )
+            Text(
+                text = value,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+@Composable
+fun DailyStatRow(stat: DayStat, today: String, yesterday: String) {
+    val label = when (stat.date) {
+        today -> "Today"
+        yesterday -> "Yesterday"
+        else -> stat.date
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            fontWeight = if (stat.date == today) FontWeight.Bold else FontWeight.Normal,
+            color = if (stat.date == today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
+
+        Text(
+            text = "${stat.count} reels",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun getFormattedDate(daysOffset: Int): String {
+    val cal = Calendar.getInstance()
+    cal.add(Calendar.DAY_OF_YEAR, daysOffset)
+    return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(cal.time)
+}
+
 private fun checkAccessibilityEnabled(context: Context): Boolean {
-    // Check in-memory service status first
     if (ReelTrackerState.isServiceRunning.value) return true
 
-    // Check system setting string directly
     try {
         val enabledServices = Settings.Secure.getString(
             context.contentResolver,
@@ -301,7 +442,6 @@ private fun checkAccessibilityEnabled(context: Context): Boolean {
         }
     } catch (_: Exception) {}
 
-    // Fallback: Check AccessibilityManager
     return try {
         val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
         val enabledList = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)

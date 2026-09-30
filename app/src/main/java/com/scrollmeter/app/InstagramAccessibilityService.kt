@@ -5,16 +5,22 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.scrollmeter.app.data.AppDatabase
+import com.scrollmeter.app.data.ReelRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class InstagramAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main)
     private var dwellJob: Job? = null
+    private lateinit var database: AppDatabase
 
     // Track active reel state
     private var activeFingerprint: String = ""
@@ -33,6 +39,15 @@ class InstagramAccessibilityService : AccessibilityService() {
         const val MIN_DWELL_TIME_MS = 1000L
         
         private const val SCAN_THROTTLE_MS = 150L
+
+        fun getTodayDateString(): String {
+            return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        database = AppDatabase.getInstance(applicationContext)
     }
 
     override fun onServiceConnected() {
@@ -68,7 +83,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val eventPkg = event.packageName?.toString() ?: ""
         if (eventPkg != INSTAGRAM_PKG) {
-            // User left Instagram: cancel unconfirmed dwell job
             if (!isCurrentReelCounted) {
                 dwellJob?.cancel()
             }
@@ -83,7 +97,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val rootNode = rootInActiveWindow ?: return
         try {
-            // Strict package check: ensure root node belongs strictly to Instagram
             val rootPkg = rootNode.packageName?.toString() ?: ""
             if (rootPkg != INSTAGRAM_PKG) {
                 return
@@ -158,7 +171,6 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
-        // Only process if we confirmed the user is actually watching a Reel
         if (!isReelsSurface && detectedCreator.isEmpty()) {
             return
         }
@@ -173,21 +185,17 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         if (fingerprint.isBlank()) return
 
-        // If this is a new Reel on screen
         if (fingerprint != activeFingerprint) {
             handleReelTransition(fingerprint)
         }
     }
 
     private fun handleReelTransition(newFingerprint: String) {
-        // Cancel pending timer on previous unconfirmed reel
         dwellJob?.cancel()
 
         activeFingerprint = newFingerprint
         ReelTrackerState.updateCurrentCandidate(newFingerprint)
 
-        // Prevent double counting if the user already watched this exact Reel in the last 10 reels
-        // (e.g. switching to ScrollMeter and switching back to the same Reel)
         if (recentlyCountedReels.contains(newFingerprint)) {
             isCurrentReelCounted = true
             Log.d(TAG, "Reel already counted previously: $newFingerprint (Skipping recount)")
@@ -202,14 +210,28 @@ class InstagramAccessibilityService : AccessibilityService() {
             if (!isCurrentReelCounted && activeFingerprint == newFingerprint) {
                 isCurrentReelCounted = true
                 
-                // Add to recent cache
                 if (recentlyCountedReels.size >= 15) {
                     recentlyCountedReels.removeFirst()
                 }
                 recentlyCountedReels.addLast(newFingerprint)
 
+                // Persist confirmed Reel view into SQLite via Room
+                val record = ReelRecord(
+                    dateString = getTodayDateString(),
+                    timestamp = System.currentTimeMillis(),
+                    creator = newFingerprint,
+                    dwellTimeMs = MIN_DWELL_TIME_MS
+                )
+                launch(Dispatchers.IO) {
+                    try {
+                        database.reelDao().insert(record)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error inserting into Room database", e)
+                    }
+                }
+
                 ReelTrackerState.incrementCount(newFingerprint)
-                Log.i(TAG, "Reel Confirmed (#${ReelTrackerState.reelCount.value}): $newFingerprint")
+                Log.i(TAG, "Reel Saved to DB (#${ReelTrackerState.reelCount.value}): $newFingerprint")
             }
         }
     }
