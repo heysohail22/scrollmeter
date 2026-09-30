@@ -119,8 +119,8 @@ class MainActivity : ComponentActivity() {
         InstagramAccessibilityService.onAppForegroundedDirect()
     }
 
-    override fun onPause() {
-        super.onPause()
+    override fun onStop() {
+        super.onStop()
         InstagramAccessibilityService.onAppBackgroundedDirect()
     }
 }

@@ -138,14 +138,22 @@ class InstagramAccessibilityService : AccessibilityService() {
     }
 
     fun onAppForegrounded() {
+        liveTickerJob?.cancel()
+        liveTickerJob = null
+        dwellJob?.cancel()
+        dwellJob = null
         commitActiveReelTime()
         closeCurrentSessionIfActive()
-        liveTickerJob?.cancel()
-        dwellJob?.cancel()
         activeCreator = ""
         activeRecordId = 0L
         activeReelStartTime = 0L
         notchOverlayManager.hide()
+    }
+
+    fun isInstagramForeground(): Boolean {
+        if (isAppInForeground) return false
+        val activePkg = rootInActiveWindow?.packageName?.toString() ?: ""
+        return activePkg == INSTAGRAM_PKG
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -153,27 +161,20 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         val eventPkg = event.packageName?.toString() ?: ""
 
-        // If user switched to ScrollMeter app: stop timer, commit reel, and hide floating pill!
-        if (eventPkg == packageName || eventPkg == "com.scrollmeter.app") {
+        // If user is inside ScrollMeter: immediately stop timer, commit reel, and hide floating pill!
+        if (eventPkg == packageName || eventPkg == "com.scrollmeter.app" || isAppInForeground) {
             onAppForegroundedDirect()
             return
         }
 
         if (eventPkg != INSTAGRAM_PKG) {
             // Check if user navigated away from Instagram (to Home launcher, Recents, or another app)
-            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                val className = event.className?.toString() ?: ""
-                val isTransient = eventPkg.contains("inputmethod") ||
-                        (eventPkg == "com.android.systemui" && (className.contains("Toast") || className.contains("Volume")))
-                if (!isTransient) {
-                    onAppForegrounded()
-                }
+            val className = event.className?.toString() ?: ""
+            val isTransient = eventPkg.contains("inputmethod") ||
+                    (eventPkg == "com.android.systemui" && (className.contains("Toast") || className.contains("Volume")))
+            if (!isTransient) {
+                onAppForegrounded()
             }
-            return
-        }
-
-        if (isAppInForeground) {
-            notchOverlayManager.hide()
             return
         }
 
@@ -186,10 +187,12 @@ class InstagramAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
         try {
             val rootPkg = rootNode.packageName?.toString() ?: ""
-            if (rootPkg == packageName || rootPkg == "com.scrollmeter.app") {
+            if (rootPkg == packageName || rootPkg == "com.scrollmeter.app" || isAppInForeground) {
+                onAppForegroundedDirect()
                 return
             }
             if (rootPkg != INSTAGRAM_PKG) {
+                onAppForegrounded()
                 return
             }
 
@@ -567,12 +570,19 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     private fun startLiveTicker(recordId: Long, sessionId: Long, startTime: Long) {
         liveTickerJob?.cancel()
-        if (isAppInForeground) {
+        if (isAppInForeground || !isInstagramForeground()) {
             notchOverlayManager.hide()
             return
         }
         liveTickerJob = serviceScope.launch {
-            while (isActive && !isAppInForeground) {
+            while (isActive) {
+                if (isAppInForeground || !isInstagramForeground()) {
+                    withContext(Dispatchers.Main) {
+                        notchOverlayManager.hide()
+                    }
+                    break
+                }
+
                 val now = System.currentTimeMillis()
                 val elapsedMs = (now - startTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
                 
@@ -591,7 +601,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                     } catch (_: Exception) {}
                 }
 
-                if (isAppInForeground) {
+                if (isAppInForeground || !isInstagramForeground()) {
                     withContext(Dispatchers.Main) {
                         notchOverlayManager.hide()
                     }

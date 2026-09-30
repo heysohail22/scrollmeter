@@ -62,7 +62,8 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     fun showOrUpdate(durationMs: Long, reelCount: Int) {
-        if (!isOverlayEnabled(context) || InstagramAccessibilityService.isAppInForeground) {
+        val service = InstagramAccessibilityService.instance
+        if (!isOverlayEnabled(context) || InstagramAccessibilityService.isAppInForeground || service == null || !service.isInstagramForeground()) {
             hide()
             return
         }
