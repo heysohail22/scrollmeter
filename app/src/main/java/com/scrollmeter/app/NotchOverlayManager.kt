@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.provider.Settings
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -15,7 +17,9 @@ import android.widget.TextView
 
 class NotchOverlayManager(private val context: Context) {
 
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val windowManager: WindowManager by lazy {
+        context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    }
     private var overlayView: LinearLayout? = null
     private var isAttached = false
 
@@ -23,6 +27,7 @@ class NotchOverlayManager(private val context: Context) {
     private var countTextView: TextView? = null
 
     companion object {
+        private const val TAG = "NotchOverlay"
         const val PREF_KEY_NOTCH_OVERLAY = "pref_notch_overlay_enabled"
         const val PREFS_NAME = "scrollmeter_settings"
 
@@ -75,6 +80,7 @@ class NotchOverlayManager(private val context: Context) {
                 val params = createLayoutParams()
                 windowManager.addView(overlayView, params)
                 isAttached = true
+                Log.i(TAG, "Notch overlay attached to WindowManager successfully")
                 overlayView?.apply {
                     alpha = 0f
                     scaleX = 0.85f
@@ -88,7 +94,17 @@ class NotchOverlayManager(private val context: Context) {
                         .start()
                 }
             } catch (e: Exception) {
-                isAttached = false
+                Log.e(TAG, "Failed adding overlay with primary type: ${e.message}", e)
+                try {
+                    val fallbackParams = createFallbackLayoutParams()
+                    windowManager.addView(overlayView, fallbackParams)
+                    isAttached = true
+                    Log.i(TAG, "Notch overlay attached using fallback type")
+                    overlayView?.visibility = View.VISIBLE
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Failed adding overlay with fallback type: ${e2.message}", e2)
+                    isAttached = false
+                }
             }
         }
     }
@@ -123,7 +139,10 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     private fun createLayoutParams(): WindowManager.LayoutParams {
-        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val canDraw = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(context)
+        val overlayType = if (canDraw) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
             @Suppress("DEPRECATION")
@@ -135,8 +154,30 @@ class NotchOverlayManager(private val context: Context) {
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        params.y = getStatusBarHeight() + dpToPx(4f)
+        return params
+    }
+
+    private fun createFallbackLayoutParams(): WindowManager.LayoutParams {
+        val fallbackType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            fallbackType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL

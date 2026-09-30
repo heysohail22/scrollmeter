@@ -124,7 +124,9 @@ fun ScrollMeterAppRoot() {
     // 100% Real Room Database flows
     val todayCount by reelDao.observeCountForDate(todayDate).collectAsState(initial = 0)
     val todayTimeMs by reelDao.observeTotalTimeForDate(todayDate).collectAsState(initial = 0L)
-    val todayAvgMs by reelDao.observeAvgTimeForDate(todayDate).collectAsState(initial = 0.0)
+    val todayAvgMs = remember(todayCount, todayTimeMs) {
+        if (todayCount > 0) todayTimeMs.toDouble() / todayCount else 0.0
+    }
 
     val monthCount by reelDao.observeCountForMonth(currentMonthPrefix).collectAsState(initial = 0)
     val monthTimeMs by reelDao.observeTotalTimeForMonth(currentMonthPrefix).collectAsState(initial = 0L)
@@ -132,18 +134,18 @@ fun ScrollMeterAppRoot() {
     val allSessions by reelDao.observeAllSessions().collectAsState(initial = emptyList())
 
     var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
+    var isNotchEnabled by remember {
+        mutableStateOf(NotchOverlayManager.isOverlayEnabled(context))
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         isAccessibilityEnabled = checkAccessibilityEnabled(context)
+        isNotchEnabled = NotchOverlayManager.isOverlayEnabled(context)
     }
 
     // Handle back button when viewing a session detail
     BackHandler(enabled = selectedSessionId != null) {
         selectedSessionId = null
-    }
-
-    var isNotchEnabled by remember {
-        mutableStateOf(NotchOverlayManager.isOverlayEnabled(context))
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -235,9 +237,18 @@ fun ScrollMeterAppRoot() {
                         displayMonth = displayMonth,
                         isServiceActive = isAccessibilityEnabled,
                         isNotchEnabled = isNotchEnabled,
-                        onToggleNotch = {
-                            NotchOverlayManager.setOverlayEnabled(context, it)
-                            isNotchEnabled = it
+                        onToggleNotch = { enabled ->
+                            NotchOverlayManager.setOverlayEnabled(context, enabled)
+                            isNotchEnabled = enabled
+                            if (enabled && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                                try {
+                                    val intent = Intent(
+                                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        android.net.Uri.parse("package:${context.packageName}")
+                                    )
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {}
+                            }
                         },
                         onServiceCardClick = {
                             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
