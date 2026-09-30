@@ -75,53 +75,51 @@ class NotchOverlayManager(private val context: Context) {
         timeTextView?.text = timeStr
         countTextView?.text = countStr
 
+        // Attach to WindowManager once if not already attached
         if (overlayView != null && !isAttached) {
             try {
                 val params = createLayoutParams()
                 windowManager.addView(overlayView, params)
                 isAttached = true
-                Log.i(TAG, "Notch overlay attached to WindowManager successfully")
-                overlayView?.apply {
-                    alpha = 0f
-                    scaleX = 0.85f
-                    scaleY = 0.85f
-                    visibility = View.VISIBLE
-                    animate()
-                        .alpha(1f)
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .setDuration(220)
-                        .start()
-                }
+                Log.i(TAG, "Notch overlay attached to WindowManager")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed adding overlay with primary type: ${e.message}", e)
+                Log.w(TAG, "Primary window type failed: ${e.message}, trying fallback")
                 try {
                     val fallbackParams = createFallbackLayoutParams()
                     windowManager.addView(overlayView, fallbackParams)
                     isAttached = true
-                    Log.i(TAG, "Notch overlay attached using fallback type")
-                    overlayView?.visibility = View.VISIBLE
+                    Log.i(TAG, "Notch overlay attached using fallback")
                 } catch (e2: Exception) {
-                    Log.e(TAG, "Failed adding overlay with fallback type: ${e2.message}", e2)
+                    Log.e(TAG, "All window types failed: ${e2.message}")
                     isAttached = false
+                    return
                 }
+            }
+        }
+
+        // Smoothly show view without re-adding to WindowManager
+        if (overlayView != null && isAttached) {
+            if (overlayView?.visibility != View.VISIBLE) {
+                overlayView?.animate()?.cancel()
+                overlayView?.alpha = 0f
+                overlayView?.visibility = View.VISIBLE
+                overlayView?.animate()
+                    ?.alpha(1f)
+                    ?.setDuration(180)
+                    ?.start()
             }
         }
     }
 
     fun hide() {
-        if (overlayView != null && isAttached) {
+        if (overlayView != null && isAttached && overlayView?.visibility == View.VISIBLE) {
+            overlayView?.animate()?.cancel()
             overlayView?.animate()
                 ?.alpha(0f)
-                ?.scaleX(0.85f)
-                ?.scaleY(0.85f)
-                ?.setDuration(180)
+                ?.setDuration(150)
                 ?.withEndAction {
                     try {
-                        if (isAttached && overlayView != null) {
-                            windowManager.removeView(overlayView)
-                            isAttached = false
-                        }
+                        overlayView?.visibility = View.GONE
                     } catch (_: Exception) {}
                 }
                 ?.start()
@@ -130,6 +128,7 @@ class NotchOverlayManager(private val context: Context) {
 
     fun destroy() {
         try {
+            overlayView?.animate()?.cancel()
             if (isAttached && overlayView != null) {
                 windowManager.removeViewImmediate(overlayView)
             }
@@ -159,7 +158,7 @@ class NotchOverlayManager(private val context: Context) {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = getStatusBarHeight() + dpToPx(4f)
+        params.y = getStatusBarHeight() + dpToPx(3f)
         return params
     }
 
@@ -181,7 +180,7 @@ class NotchOverlayManager(private val context: Context) {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = getStatusBarHeight() + dpToPx(4f)
+        params.y = getStatusBarHeight() + dpToPx(3f)
         return params
     }
 
@@ -189,6 +188,7 @@ class NotchOverlayManager(private val context: Context) {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE // Initially GONE until first genuine show
             setPadding(dpToPx(13f), dpToPx(6f), dpToPx(13f), dpToPx(6f))
 
             // Premium Dark Pill Background with Glowing Purple Border

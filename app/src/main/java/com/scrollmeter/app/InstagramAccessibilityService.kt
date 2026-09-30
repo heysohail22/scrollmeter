@@ -237,16 +237,7 @@ class InstagramAccessibilityService : AccessibilityService() {
 
         scan(root)
 
-        // If user left Reels (e.g. navigated to Feed or DMs), finalize active Reel time
-        if (!isReelsSurface && detectedCreator.isEmpty()) {
-            commitActiveReelTime()
-            liveTickerJob?.cancel()
-            dwellJob?.cancel()
-            activeCreator = ""
-            notchOverlayManager.hide()
-            liveNotificationManager.cancel()
-            return
-        }
+
 
         val pageName = when {
             detectedCreator.isNotEmpty() -> detectedCreator
