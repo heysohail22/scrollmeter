@@ -4,6 +4,17 @@
 
 It features a live **Floating Notch Pill** that sits unobtrusively under your front camera cutout while browsing Reels, detailed session history, daily watch time analytics, and creator tracking.
 
+<p align="center">
+  <a href="https://drive.google.com/file/d/1hq96hf2PB2DZgkczRYtqbeRbZAAku6Lt/view?usp=drive_link">
+    <img src="https://img.shields.io/badge/Download_APK-Google_Drive-brightgreen?style=for-the-badge&logo=google-drive&logoColor=white" alt="Download APK" />
+  </a>
+  <img src="https://img.shields.io/badge/Platform-Android-blue?style=for-the-badge&logo=android" alt="Platform Android" />
+  <img src="https://img.shields.io/badge/License-MIT-purple?style=for-the-badge" alt="License MIT" />
+</p>
+
+### 📥 [**Click Here to Download ScrollMeter APK (Google Drive)**](https://drive.google.com/file/d/1hq96hf2PB2DZgkczRYtqbeRbZAAku6Lt/view?usp=drive_link)
+> Tap the link above to download the latest `.apk` file directly to your phone.
+
 ---
 
 ## ✨ Features
@@ -68,10 +79,12 @@ app/build/outputs/apk/debug/app-debug.apk
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
 
-### Method B: Install via APK File (Sharing with Anyone)
-1. Copy `app/build/outputs/apk/debug/app-debug.apk` to your phone or share it via WhatsApp, Telegram, Quick Share, Google Drive, or Bluetooth.
-2. On the recipient's phone, tap the APK file to install.
+### Method B: Install via APK Download (Recommended for Users)
+1. Download the APK directly from Google Drive:
+   👉 [**Download ScrollMeter.apk**](https://drive.google.com/file/d/1hq96hf2PB2DZgkczRYtqbeRbZAAku6Lt/view?usp=drive_link)
+2. On your phone, open the downloaded APK file.
 3. If prompted, toggle **Allow from this source** / **Install unknown apps**.
+4. Tap **Install**.
 
 ---
 
