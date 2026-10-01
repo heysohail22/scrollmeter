@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.scrollmeter.app"
     compileSdk = 34
+    buildToolsVersion = "34.0.0"
 
     defaultConfig {
         applicationId = "com.scrollmeter.app"

@@ -74,8 +74,12 @@ class NotchOverlayManager(private val context: Context) {
             initOverlay()
         }
 
-        timeTextView?.text = timeStr
-        countTextView?.text = countStr
+        if (timeTextView?.text != timeStr) {
+            timeTextView?.text = timeStr
+        }
+        if (countTextView?.text != countStr) {
+            countTextView?.text = countStr
+        }
 
         // Attach to WindowManager once if not already attached
         if (overlayView != null && !isAttached) {
@@ -212,6 +216,7 @@ class NotchOverlayManager(private val context: Context) {
 
         // Active Status Dot (Green, slightly softer)
         val dot = View(context).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             val dotBg = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.parseColor("#34D399")) // Softer emerald green
@@ -226,6 +231,7 @@ class NotchOverlayManager(private val context: Context) {
 
         // Live Watch Time
         timeTextView = TextView(context).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             setTextColor(Color.parseColor("#E2E8F0"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -235,6 +241,7 @@ class NotchOverlayManager(private val context: Context) {
 
         // Bullet divider
         val bullet = TextView(context).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             text = " • "
             setTextColor(Color.parseColor("#64748B"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
@@ -243,6 +250,7 @@ class NotchOverlayManager(private val context: Context) {
 
         // Reel Count
         countTextView = TextView(context).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             setTextColor(Color.parseColor("#C084FC"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD

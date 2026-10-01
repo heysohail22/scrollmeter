@@ -119,8 +119,11 @@ class MainActivity : ComponentActivity() {
         InstagramAccessibilityService.onScrollMeterResumed()
     }
 
-    override fun onPause() {
-        super.onPause()
+    // onStop fires only when the activity is truly invisible (user navigated away).
+    // onPause fires too eagerly on MIUI during scroll recompositions / overlay focus
+    // shifts, which caused the Instagram tracker to think ScrollMeter was foregrounded.
+    override fun onStop() {
+        super.onStop()
         InstagramAccessibilityService.onScrollMeterPaused()
     }
 }

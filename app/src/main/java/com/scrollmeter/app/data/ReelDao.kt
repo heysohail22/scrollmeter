@@ -20,7 +20,7 @@ interface ReelDao {
     @Query("SELECT COUNT(*) FROM reel_records WHERE dateString = :dateString")
     fun observeCountForDate(dateString: String): Flow<Int>
 
-    @Query("SELECT COALESCE(SUM(totalDurationMs), 0) FROM reel_sessions WHERE dateString = :dateString")
+    @Query("SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE dateString = :dateString")
     fun observeTotalTimeForDate(dateString: String): Flow<Long>
 
     @Query("SELECT COALESCE(AVG(dwellTimeMs), 0) FROM reel_records WHERE dateString = :dateString")
@@ -29,13 +29,13 @@ interface ReelDao {
     @Query("SELECT COUNT(*) FROM reel_records WHERE dateString LIKE :monthPrefix || '%'")
     fun observeCountForMonth(monthPrefix: String): Flow<Int>
 
-    @Query("SELECT COALESCE(SUM(totalDurationMs), 0) FROM reel_sessions WHERE dateString LIKE :monthPrefix || '%'")
+    @Query("SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE dateString LIKE :monthPrefix || '%'")
     fun observeTotalTimeForMonth(monthPrefix: String): Flow<Long>
 
     @Query("SELECT COUNT(*) FROM reel_records")
     fun observeTotalCount(): Flow<Int>
 
-    @Query("SELECT dateString as date, COUNT(*) as count, (SELECT COALESCE(SUM(totalDurationMs), 0) FROM reel_sessions WHERE dateString = reel_records.dateString) as totalDurationMs FROM reel_records GROUP BY dateString ORDER BY dateString DESC LIMIT 31")
+    @Query("SELECT dateString as date, COUNT(*) as count, COALESCE(SUM(dwellTimeMs), 0) as totalDurationMs FROM reel_records GROUP BY dateString ORDER BY dateString DESC LIMIT 31")
     fun observeDailyStats(): Flow<List<DayStat>>
 
     @Query("SELECT * FROM reel_records WHERE dateString = :dateString ORDER BY timestamp DESC")
@@ -66,7 +66,7 @@ interface ReelDao {
     @Query("SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId")
     suspend fun getSessionTotalDwell(sessionId: Long): Long
 
-    @Query("UPDATE reel_sessions SET endTime = :endTime, totalReels = (SELECT COUNT(*) FROM reel_records WHERE sessionId = :sessionId), totalDurationMs = MAX(:endTime - startTime, (SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId)) WHERE id = :sessionId")
+    @Query("UPDATE reel_sessions SET endTime = :endTime, totalReels = (SELECT COUNT(*) FROM reel_records WHERE sessionId = :sessionId), totalDurationMs = (SELECT COALESCE(SUM(dwellTimeMs), 0) FROM reel_records WHERE sessionId = :sessionId) WHERE id = :sessionId")
     suspend fun refreshSessionStats(sessionId: Long, endTime: Long)
 
     @Query("DELETE FROM reel_records")

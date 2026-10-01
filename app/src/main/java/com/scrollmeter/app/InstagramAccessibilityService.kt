@@ -46,8 +46,8 @@ class InstagramAccessibilityService : AccessibilityService() {
         private const val TAG = "ScrollMeterService"
         const val INSTAGRAM_PKG = "com.instagram.android"
         
-        // 1.0s dwell threshold to verify genuine viewing
-        const val MIN_DWELL_TIME_MS = 1000L
+        // 300ms threshold to reliably capture fast scrolling and flicking through reels
+        const val MIN_DWELL_TIME_MS = 300L
         
         // Cap single Reel watch time to 180s (3 minutes) to prevent runaways
         const val MAX_REEL_WATCH_CAP_MS = 180_000L
@@ -55,7 +55,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         // If user is away from Reels for > 90 seconds, close session
         const val SESSION_TIMEOUT_MS = 90_000L
 
-        private const val SCAN_THROTTLE_MS = 150L
+        private const val SCAN_THROTTLE_MS = 80L
 
         private val USERNAME_REGEX = Regex("^[a-zA-Z0-9._]{2,30}$")
 
@@ -90,12 +90,20 @@ class InstagramAccessibilityService : AccessibilityService() {
             "options", "transparency", "details", "control", "controls", "why",
             "sequence", "unfollow", "mute", "block", "restrict", "info", "settings", "not",
             "turn sound on", "turn sound off", "sound on", "sound off", "sound", "music",
-            "unmute", "audio muted", "audio unmuted"
+            "unmute", "audio muted", "audio unmuted", "message", "see more", "see translation",
+            "scrollmeter", "instagram", "open app"
         )
 
         fun getTodayDateString(): String {
             return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         }
+    }
+
+    fun isInstagramActive(): Boolean {
+        if (isScrollMeterForeground) return false
+        val activeRoot = rootInActiveWindow ?: return false
+        val pkg = activeRoot.packageName?.toString() ?: ""
+        return pkg == INSTAGRAM_PKG
     }
 
     override fun onCreate() {
@@ -147,6 +155,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         activeCreator = ""
         activeRecordId = 0L
         activeReelStartTime = 0L
+        currentSessionId = 0L
         notchOverlayManager.hide()
     }
 
@@ -154,56 +163,67 @@ class InstagramAccessibilityService : AccessibilityService() {
         if (event == null) return
 
         val eventPkg = event.packageName?.toString() ?: ""
+        val eventType = event.eventType
 
-        // 1. If event is from ScrollMeter: ensure foreground flag, kill any tickers/overlays, and return!
+        // 1. Events from ScrollMeter package (MainActivity or NotchOverlayManager):
+        // NEVER treat our own floating notch overlay as foregrounding the ScrollMeter app!
+        // MainActivity already manages foreground state via onScrollMeterResumed() / onScrollMeterPaused().
         if (eventPkg == packageName || eventPkg == "com.scrollmeter.app") {
-            isScrollMeterForeground = true
-            onAppForegrounded()
             return
         }
 
-        // 2. If ScrollMeter is currently foregrounded: do not process background events!
+        // 2. If ScrollMeter is currently open and foregrounded: suppress background reel tracking.
         if (isScrollMeterForeground) {
-            notchOverlayManager.hide()
-            liveTickerJob?.cancel()
             return
         }
 
-        // 3. If event is from another non-Instagram app (Launcher, Recents, Settings, WhatsApp):
-        if (eventPkg != INSTAGRAM_PKG) {
+        // 3. If event is from Instagram: process normally.
+        if (eventPkg == INSTAGRAM_PKG) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastScanTimestamp < SCAN_THROTTLE_MS) return
+            lastScanTimestamp = currentTime
+
+            // Safely locate Instagram's root window, ignoring floating overlays or system bars
+            val rootNode = (if (rootInActiveWindow?.packageName?.toString() == INSTAGRAM_PKG) rootInActiveWindow else null)
+                ?: windows.firstOrNull { it.root?.packageName?.toString() == INSTAGRAM_PKG }?.root
+                ?: (if (event.source?.packageName?.toString() == INSTAGRAM_PKG) event.source else null)
+                ?: return
+
+            try {
+                inspectInstagramTree(rootNode, currentTime)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error inspecting node tree", e)
+            }
+            return
+        }
+
+        // 4. Event from a third-party / system package.
+        // Only reset tracking on a real window-state-change to a genuine non-transient app.
+        // Ignore transient system overlays: IME, toasts, volume controls, status bar, and our overlay.
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val className = event.className?.toString() ?: ""
             val isTransient = eventPkg.contains("inputmethod") ||
-                    (eventPkg == "com.android.systemui" && (className.contains("Toast") || className.contains("Volume")))
+                    eventPkg == "com.android.systemui" ||
+                    eventPkg == "android" ||
+                    eventPkg == packageName ||
+                    eventPkg == "com.scrollmeter.app" ||
+                    className.contains("Toast", ignoreCase = true) ||
+                    className.contains("PopupWindow", ignoreCase = true) ||
+                    className.contains("Panel", ignoreCase = true)
+
             if (!isTransient) {
+                // A genuine foreground app replaced Instagram — stop tracking.
+                Log.d(TAG, "Real app foregrounded: $eventPkg — resetting tracker")
                 onAppForegrounded()
             }
-            return
         }
-
-        // 4. --- Event is strictly from Instagram (com.instagram.android) ---
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastScanTimestamp < SCAN_THROTTLE_MS) {
-            return
-        }
-        lastScanTimestamp = currentTime
-
-        val rootNode = rootInActiveWindow ?: return
-        try {
-            val rootPkg = rootNode.packageName?.toString() ?: ""
-            if (rootPkg.isNotEmpty() && rootPkg != INSTAGRAM_PKG) {
-                if (rootPkg == packageName || rootPkg == "com.scrollmeter.app") {
-                    onAppForegrounded()
-                }
-                return
-            }
-
-            inspectInstagramTree(rootNode, currentTime)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error inspecting node tree", e)
-        }
+        // All other event types from non-Instagram packages are silently ignored.
     }
 
     private fun inspectInstagramTree(root: AccessibilityNodeInfo, currentTime: Long) {
+        val rootPkg = root.packageName?.toString() ?: ""
+        if (rootPkg.isNotEmpty() && rootPkg != INSTAGRAM_PKG) return
+
         var detectedCreator = ""
         var detectedAudio = ""
         var detectedCaption = ""
@@ -282,6 +302,12 @@ class InstagramAccessibilityService : AccessibilityService() {
                             Log.i(TAG, "Captured AudioTrack from Reel by: '$detectedAudio'")
                         }
                     }
+                } else if (desc.startsWith("Profile picture of ", ignoreCase = true) && detectedCreator.isEmpty()) {
+                    val candidate = desc.removePrefix("Profile picture of ").removePrefix("profile picture of ")
+                        .substringBefore("•").substringBefore(".").trim()
+                    if (isValidUsername(candidate)) {
+                        detectedCreator = candidate
+                    }
                 } else if (detectedCaption.isEmpty() && isCaptionForCurrentReel(desc, detectedCreator) && desc != detectedAudio) {
                     detectedCaption = cleanCaptionText(desc, detectedCreator)
                 }
@@ -289,9 +315,12 @@ class InstagramAccessibilityService : AccessibilityService() {
 
             // 4. Extract Creator from explicit author View IDs (fallback only if desc did not have "Reel by")
             if (detectedCreator.isEmpty() && !viewId.contains("comment", ignoreCase = true)) {
-                if (viewId.contains("clips_author") || viewId.contains("clips_creator") ||
-                    (viewId.contains("profile_name") && !viewId.contains("comment", ignoreCase = true))
-                ) {
+                val isExplicitAuthorView = viewId.contains("clips_author", ignoreCase = true) ||
+                        viewId.contains("clips_creator", ignoreCase = true) ||
+                        viewId.contains("row_feed_photo_profile_name", ignoreCase = true) ||
+                        (viewId.contains("profile_name", ignoreCase = true) && !viewId.contains("comment", ignoreCase = true))
+
+                if (isExplicitAuthorView) {
                     val cleanText = text.removePrefix("@").trim()
                     if (isValidUsername(cleanText)) {
                         detectedCreator = cleanText
@@ -333,10 +362,19 @@ class InstagramAccessibilityService : AccessibilityService() {
                         if (isCaptionForCurrentReel(text, detectedCreator)) {
                             detectedCaption = cleanCaptionText(text, detectedCreator)
                         }
-                    } else if (text.length in 2..30 && detectedCreator.isEmpty() && candidateTexts.isEmpty()) {
-                        val candidate = text.removePrefix("@").trim()
-                        if (isValidUsername(candidate)) {
-                            candidateTexts.add(candidate)
+                    } else if (detectedCreator.isEmpty() && candidateTexts.isEmpty()) {
+                        // Only treat as candidate author if it starts with '@' or has an author/profile viewId
+                        val isAuthorView = viewId.contains("author", ignoreCase = true) ||
+                                viewId.contains("creator", ignoreCase = true) ||
+                                viewId.contains("user", ignoreCase = true) ||
+                                viewId.contains("profile", ignoreCase = true)
+                        val hasAtSign = text.startsWith("@")
+
+                        if (isAuthorView || hasAtSign) {
+                            val candidate = text.removePrefix("@").trim()
+                            if (isValidUsername(candidate)) {
+                                candidateTexts.add(candidate)
+                            }
                         }
                     }
                 }
@@ -504,7 +542,6 @@ class InstagramAccessibilityService : AccessibilityService() {
     ) {
         // Commit dwell time for the previous Reel
         commitActiveReelTime()
-        liveTickerJob?.cancel()
         dwellJob?.cancel()
 
         activeCreator = pageName
@@ -520,7 +557,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         dwellJob = serviceScope.launch {
             delay(MIN_DWELL_TIME_MS)
             
-            // Confirm the user stayed on this reel for at least MIN_DWELL_TIME_MS
+            // Confirm the user stayed on this reel for at least MIN_DWELL_TIME_MS (300ms)
             if (activeCreator.equals(pageName, ignoreCase = true)) {
                 if (!isAlreadyCounted) {
                     if (recentlyCountedReels.size >= 15) {
@@ -556,9 +593,9 @@ class InstagramAccessibilityService : AccessibilityService() {
                                 database.reelDao().updateMetadataIfEmpty(rowId, activeCaption, activeAudio)
                             }
 
-                            // Launch live ticker to continually update dwell time every second
+                            // Keep live ticker running smoothly for this session
                             withContext(Dispatchers.Main) {
-                                startLiveTicker(rowId, sessionId, transitionTime)
+                                startLiveTicker(sessionId)
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Error inserting ReelRecord", e)
@@ -571,24 +608,36 @@ class InstagramAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startLiveTicker(recordId: Long, sessionId: Long, startTime: Long) {
-        liveTickerJob?.cancel()
-        if (isScrollMeterForeground) {
+    private fun startLiveTicker(sessionId: Long) {
+        if (liveTickerJob?.isActive == true) {
+            // Live ticker is already running continuously across reels in this session
+            return
+        }
+        if (!isInstagramActive()) {
             notchOverlayManager.hide()
             return
         }
         liveTickerJob = serviceScope.launch {
-            while (isActive && !isScrollMeterForeground) {
+            while (isActive && isInstagramActive()) {
                 val now = System.currentTimeMillis()
-                val elapsedMs = (now - startTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
-                
+                val currentRecId = activeRecordId
+                val currentStartTime = activeReelStartTime
+
+                if (currentRecId > 0L && currentStartTime > 0L) {
+                    val elapsedMs = (now - currentStartTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
+                    withContext(Dispatchers.IO) {
+                        try {
+                            database.reelDao().updateDwellTime(currentRecId, elapsedMs)
+                            database.reelDao().refreshSessionStats(sessionId, now)
+                        } catch (_: Exception) {}
+                    }
+                }
+
                 var sessionDuration = 0L
                 var sessionReels = 1
 
                 withContext(Dispatchers.IO) {
                     try {
-                        database.reelDao().updateDwellTime(recordId, elapsedMs)
-                        database.reelDao().refreshSessionStats(sessionId, now)
                         val sess = database.reelDao().getSessionById(sessionId)
                         if (sess != null) {
                             sessionDuration = sess.totalDurationMs
@@ -597,7 +646,7 @@ class InstagramAccessibilityService : AccessibilityService() {
                     } catch (_: Exception) {}
                 }
 
-                if (isScrollMeterForeground) {
+                if (!isInstagramActive()) {
                     withContext(Dispatchers.Main) {
                         notchOverlayManager.hide()
                     }
@@ -609,6 +658,12 @@ class InstagramAccessibilityService : AccessibilityService() {
                 }
 
                 delay(1000L)
+            }
+
+            withContext(Dispatchers.Main) {
+                if (!isInstagramActive()) {
+                    notchOverlayManager.hide()
+                }
             }
         }
     }
