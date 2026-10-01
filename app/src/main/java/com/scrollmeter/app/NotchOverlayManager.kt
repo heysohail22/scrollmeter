@@ -235,7 +235,7 @@ class NotchOverlayManager(private val context: Context) {
             setTextColor(Color.parseColor("#E2E8F0"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            text = "0s"
+            text = "0m"
         }
         root.addView(timeTextView)
 
@@ -264,12 +264,10 @@ class NotchOverlayManager(private val context: Context) {
     private fun formatDuration(ms: Long): String {
         val totalSecs = (ms / 1000).coerceAtLeast(0)
         val mins = totalSecs / 60
-        val secs = totalSecs % 60
         val hours = mins / 60
         return when {
-            hours > 0 -> String.format("%dh %02dm", hours, mins % 60)
-            mins > 0 -> String.format("%dm %02ds", mins, secs)
-            else -> "${secs}s"
+            hours > 0 -> String.format(java.util.Locale.getDefault(), "%dh %02dm", hours, mins % 60)
+            else -> "${mins}m"
         }
     }
 }

@@ -55,7 +55,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         // If user is away from Reels for > 90 seconds, close session
         const val SESSION_TIMEOUT_MS = 90_000L
 
-        private const val SCAN_THROTTLE_MS = 80L
+        private const val SCAN_THROTTLE_MS = 50L
 
         private val USERNAME_REGEX = Regex("^[a-zA-Z0-9._]{2,30}$")
 
@@ -542,7 +542,6 @@ class InstagramAccessibilityService : AccessibilityService() {
     ) {
         // Commit dwell time for the previous Reel
         commitActiveReelTime()
-        dwellJob?.cancel()
 
         activeCreator = pageName
         activeCaption = caption
@@ -553,59 +552,51 @@ class InstagramAccessibilityService : AccessibilityService() {
         ReelTrackerState.updateCurrentCandidate(pageName)
 
         val isAlreadyCounted = recentlyCountedReels.contains(pageName)
+        if (!isAlreadyCounted) {
+            if (recentlyCountedReels.size >= 15) {
+                recentlyCountedReels.removeFirst()
+            }
+            recentlyCountedReels.addLast(pageName)
+            ReelTrackerState.incrementCount(pageName)
+        }
 
-        dwellJob = serviceScope.launch {
-            delay(MIN_DWELL_TIME_MS)
-            
-            // Confirm the user stayed on this reel for at least MIN_DWELL_TIME_MS (300ms)
-            if (activeCreator.equals(pageName, ignoreCase = true)) {
-                if (!isAlreadyCounted) {
-                    if (recentlyCountedReels.size >= 15) {
-                        recentlyCountedReels.removeFirst()
+        // Immediately ensure an active session exists and insert reel record
+        ensureActiveSession(transitionTime) { sessionId ->
+            val finalCaption = activeCaption.ifBlank { caption }
+            val finalAudio = activeAudio.ifBlank { audioName }
+
+            val record = ReelRecord(
+                sessionId = sessionId,
+                dateString = getTodayDateString(),
+                timestamp = transitionTime,
+                creator = pageName,
+                caption = finalCaption,
+                audioTrack = finalAudio,
+                dwellTimeMs = 0L
+            )
+
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    val rowId = database.reelDao().insert(record)
+                    activeRecordId = rowId
+                    database.reelDao().refreshSessionStats(sessionId, System.currentTimeMillis())
+
+                    // If newer metadata arrived right as row was inserting
+                    if (activeCaption.isNotEmpty() || activeAudio.isNotEmpty()) {
+                        database.reelDao().updateMetadataIfEmpty(rowId, activeCaption, activeAudio)
                     }
-                    recentlyCountedReels.addLast(pageName)
-                    ReelTrackerState.incrementCount(pageName)
-                }
 
-                // Ensure an active session exists (or create one)
-                ensureActiveSession(transitionTime) { sessionId ->
-                    val finalCaption = activeCaption.ifBlank { caption }
-                    val finalAudio = activeAudio.ifBlank { audioName }
-
-                    val record = ReelRecord(
-                        sessionId = sessionId,
-                        dateString = getTodayDateString(),
-                        timestamp = transitionTime,
-                        creator = pageName,
-                        caption = finalCaption,
-                        audioTrack = finalAudio,
-                        dwellTimeMs = MIN_DWELL_TIME_MS
-                    )
-
-                    serviceScope.launch(Dispatchers.IO) {
-                        try {
-                            val rowId = database.reelDao().insert(record)
-                            activeRecordId = rowId
-                            database.reelDao().refreshSessionStats(sessionId, System.currentTimeMillis())
-
-                            // If newer metadata arrived right as row was inserting
-                            if (activeCaption.isNotEmpty() || activeAudio.isNotEmpty()) {
-                                database.reelDao().updateMetadataIfEmpty(rowId, activeCaption, activeAudio)
-                            }
-
-                            // Keep live ticker running smoothly for this session
-                            withContext(Dispatchers.Main) {
-                                startLiveTicker(sessionId)
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error inserting ReelRecord", e)
-                        }
+                    // Keep live ticker running smoothly for this session
+                    withContext(Dispatchers.Main) {
+                        startLiveTicker(sessionId)
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error inserting ReelRecord", e)
                 }
-
-                Log.i(TAG, "Reel Confirmed: $pageName (Session #$currentSessionId)")
             }
         }
+
+        Log.i(TAG, "Reel Counted: $pageName (Session #$currentSessionId)")
     }
 
     private fun startLiveTicker(sessionId: Long) {
