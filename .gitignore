@@ -1,12 +1,56 @@
-*.iml
+# Built application files
+*.apk
+*.aar
+*.aab
+
+# Gradle files
 .gradle/
-local.properties
-.idea/
-.DS_Store
 build/
 **/build/
-captures/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Android Studio / IntelliJ IDEA
+*.iml
+.idea/
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# CMake / Native build
 .externalNativeBuild
-.cxx
-*.apk
-*.aab
+.cxx/
+captures/
+
+# Signing files
+*.jks
+*.keystore
+
+# Large media & screen recordings
+recordings/
+*.mp4
+*.mov
+*.mkv
+*.avi
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# OS / Editor artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.project
+.settings/
+.vscode/

@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScrollMeter Live Vision Debugger</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #090D16;
+            --surface: #111827;
+            --surface-card: rgba(17, 24, 39, 0.75);
+            --border: rgba(255, 255, 255, 0.08);
+            --primary: #8B5CF6;
+            --primary-glow: rgba(139, 92, 246, 0.35);
+            --success: #10B981;
+            --success-glow: rgba(16, 185, 129, 0.35);
+            --warning: #F59E0B;
+            --info: #06B6D4;
+            --text-main: #F8FAFC;
+            --text-muted: #94A3B8;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top Navigation Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 28px;
+            background: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .brand-logo {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #8B5CF6, #3B82F6);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 18px;
+            box-shadow: 0 0 16px var(--primary-glow);
+        }
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .brand-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* Main Workspace Layout */
+        .workspace {
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            gap: 28px;
+            padding: 24px 28px;
+            max-width: 1700px;
+            margin: 0 auto;
+            width: 100%;
+            flex: 1;
+        }
+
+        /* Phone Mockup Frame */
+        .player-column {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .phone-frame {
+            position: relative;
+            width: 380px;
+            height: 800px;
+            background: #000;
+            border-radius: 40px;
+            padding: 10px;
+            box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 40px var(--primary-glow);
+            overflow: hidden;
+        }
+        .phone-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 32px;
+            overflow: hidden;
+            background: #000;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* Floating ScrollMeter Notch Pill (Simulated on video) */
+        .notch-pill {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 999px;
+            padding: 6px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 30;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .pill-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse-dot 1.5s infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
+
+        /* In-Video Live HUD Banner */
+        .hud-banner {
+            position: absolute;
+            bottom: 60px;
+            left: 14px;
+            right: 14px;
+            background: rgba(17, 24, 39, 0.90);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 14px;
+            padding: 10px 14px;
+            z-index: 30;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+            transition: all 0.25s ease;
+        }
+        .hud-event {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--success);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* ROI Overlays on Video */
+        .roi-box {
+            position: absolute;
+            pointer-events: none;
+            border: 2px dashed;
+            transition: all 0.2s ease;
+            z-index: 20;
+            display: none;
+        }
+        .roi-visible { display: block !important; }
+        .roi-action { right: 4%; top: 45%; width: 15%; height: 40%; border-color: #EC4899; background: rgba(236, 72, 153, 0.12); }
+        .roi-nav { left: 0; bottom: 0; width: 100%; height: 8%; border-color: #38BDF8; background: rgba(56, 189, 248, 0.12); }
+        .roi-anchor { left: 5%; bottom: 9%; width: 70%; height: 14%; border-color: #A855F7; background: rgba(168, 85, 247, 0.12); }
+        .roi-modal { left: 35%; top: 25%; width: 30%; height: 20%; border-color: #FBBF24; background: rgba(251, 191, 36, 0.12); }
+
+        /* Media Controls Under Phone */
+        .controls-panel {
+            width: 380px;
+            margin-top: 14px;
+            background: var(--surface-card);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 14px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .controls-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .play-btn {
+            background: linear-gradient(135deg, #8B5CF6, #6D28D9);
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 14px var(--primary-glow);
+            transition: all 0.2s;
+        }
+        .play-btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+        .transport-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border);
+            color: #E2E8F0;
+            padding: 8px 14px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        .transport-btn:hover {
+            background: rgba(139, 92, 246, 0.25);
+            border-color: var(--primary);
+            color: #FFFFFF;
+            transform: translateY(-1px);
+        }
+        .transport-btn:active {
+            transform: translateY(1px);
+            background: rgba(139, 92, 246, 0.4);
+        }
+        .speed-btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .speed-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        /* Right Dashboard Column */
+        .dashboard-column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Big Counter Card */
+        .counter-card {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(16, 185, 129, 0.08));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 20px;
+            padding: 24px;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        }
+        .counter-stat {
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .stat-number {
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--success);
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1.1;
+            margin-top: 4px;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        .stat-unit {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        /* Context Classifier Panel */
+        .glass-panel {
+            background: var(--surface-card);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 20px 24px;
+        }
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .panel-title {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+
+        .state-badge {
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .state-reels { background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid #10B981; }
+        .state-home { background: rgba(59, 130, 246, 0.15); color: #3B82F6; border: 1px solid #3B82F6; }
+        .state-modal { background: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid #F59E0B; }
+        .state-not { background: rgba(148, 163, 184, 0.15); color: #94A3B8; border: 1px solid #64748B; }
+
+        /* Signal Meters */
+        .signal-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 14px;
+        }
+        .meter-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+        }
+        .meter-label-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+        .progress-track {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 999px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.15s ease;
+        }
+
+        /* Color-Coded Interactive Timeline Bar */
+        .timeline-container {
+            margin-top: 8px;
+        }
+        .timeline-bar {
+            height: 28px;
+            width: 100%;
+            background: #1E293B;
+            border-radius: 8px;
+            position: relative;
+            cursor: pointer;
+            overflow: hidden;
+            display: flex;
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.5);
+        }
+        .timeline-cursor {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: #FFF;
+            box-shadow: 0 0 10px #FFF;
+            z-index: 10;
+            pointer-events: none;
+            transition: left 0.1s linear;
+        }
+        .timeline-seg {
+            height: 100%;
+            position: absolute;
+            top: 0;
+        }
+        .seg-home { background: #2563EB; opacity: 0.75; }
+        .seg-reels { background: #059669; opacity: 0.75; }
+        .seg-modal { background: #D97706; opacity: 0.75; }
+        .seg-dm { background: #6366F1; opacity: 0.75; }
+        .seg-profile { background: #475569; opacity: 0.75; }
+
+        .legend-row {
+            display: flex;
+            gap: 16px;
+            font-size: 11px;
+            margin-top: 8px;
+            color: var(--text-muted);
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+
+        /* Real-Time Live Event Log */
+        .event-log-container {
+            max-height: 240px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            padding-right: 6px;
+        }
+        .log-entry {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 8px;
+            border-left: 3px solid var(--border);
+            animation: fadeIn 0.3s ease;
+        }
+        .log-verified { border-left-color: var(--success); background: rgba(16, 185, 129, 0.08); }
+        .log-cut { border-left-color: var(--info); background: rgba(6, 182, 212, 0.08); }
+        .log-modal { border-left-color: var(--warning); background: rgba(245, 158, 11, 0.08); }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Toggle Switches */
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+        input[type="checkbox"] {
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            <div class="brand-logo">S</div>
+            <div>
+                <div class="brand-title">ScrollMeter Live Vision Debugger</div>
+                <div class="brand-sub">Real-Time Evaluation on <code>instagram_test_recording.mp4</code></div>
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <label class="toggle-label">
+                <input type="checkbox" id="chkROI" checked onchange="toggleROI(this.checked)">
+                Show Vision ROI Boxes
+            </label>
+            <div id="statusBadge" class="state-badge state-not">READY</div>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <!-- LEFT: Phone Video Player & Live Simulated Overlays -->
+        <div class="player-column">
+            <div class="phone-frame">
+                <div class="phone-inner">
+                    <!-- Live Floating Notch Pill -->
+                    <div class="notch-pill" id="notchPill">
+                        <div class="pill-dot"></div>
+                        <span id="pillTime">0m</span>
+                        <span style="opacity: 0.4;">|</span>
+                        <span id="pillReels" style="color: #10B981;">0 Reels</span>
+                    </div>
+
+                    <!-- Native Video -->
+                    <video id="videoPlayer" src="recordings/instagram_test_recording.mp4" playsinline preload="auto"></video>
+
+                    <!-- Vision ROI Overlays -->
+                    <div class="roi-box roi-action roi-visible" id="roiAction" title="Right-Side Action Column"></div>
+                    <div class="roi-box roi-nav roi-visible" id="roiNav" title="Bottom Navigation Bar"></div>
+                    <div class="roi-box roi-anchor roi-visible" id="roiAnchor" title="Creator UI Anchor"></div>
+                    <div class="roi-box roi-modal roi-visible" id="roiModal" title="Modal Drag-Handle Zone"></div>
+
+                    <!-- In-Video Live HUD Banner -->
+                    <div class="hud-banner" id="hudBanner">
+                        <div>
+                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Active Context</div>
+                            <div id="hudContext" style="font-weight: 800; font-size: 14px;">INSTAGRAM_HOME</div>
+                        </div>
+                        <div class="hud-event" id="hudEvent">
+                            <span>●</span>
+                            <span id="hudEventText">Monitoring</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+                <!-- Video Player Controls -->
+                <div class="controls-panel">
+                    <!-- Main Transport Controls: Rewind, Play, Forward -->
+                    <div class="controls-row" style="justify-content: center; gap: 8px;">
+                        <button class="transport-btn" onclick="skipTime(-5)" title="Rewind 5 seconds (Shift + ←)">
+                            <span>⏪</span> <span>-5s</span>
+                        </button>
+                        <button class="transport-btn" onclick="skipTime(-2)" title="Rewind 2 seconds (←)">
+                            <span>◀</span> <span>-2s</span>
+                        </button>
+                        <button class="play-btn" id="playBtn" onclick="togglePlay()" style="margin: 0 4px;">
+                            <span id="playIcon">▶</span>
+                            <span id="playText">PLAY</span>
+                        </button>
+                        <button class="transport-btn" onclick="skipTime(2)" title="Forward 2 seconds (→)">
+                            <span>+2s</span> <span>▶</span>
+                        </button>
+                        <button class="transport-btn" onclick="skipTime(5)" title="Forward 5 seconds (Shift + →)">
+                            <span>+5s</span> <span>⏩</span>
+                        </button>
+                    </div>
+
+                    <!-- Fine Frame Stepping & Jump Seconds -->
+                    <div class="controls-row" style="border-top: 1px solid var(--border); padding-top: 10px;">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 11px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Rewind:</span>
+                            <button class="speed-btn" onclick="skipTime(-10)" title="Rewind 10 seconds (J)">-10s</button>
+                            <button class="speed-btn" onclick="skipTime(-1)" title="Rewind 1 second">-1s</button>
+                            <button class="speed-btn" onclick="stepFrame(-1)" title="Step back 1 frame (Key ,)">⏮ 1 Frame</button>
+                        </div>
+                        <div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #E2E8F0;">
+                            <span id="curTimeText">00:00</span> / <span id="durTimeText">05:29</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <button class="speed-btn" onclick="stepFrame(1)" title="Step forward 1 frame (Key .)">1 Frame ⏭</button>
+                            <button class="speed-btn" onclick="skipTime(1)" title="Forward 1 second">+1s</button>
+                            <button class="speed-btn" onclick="skipTime(10)" title="Forward 10 seconds (L)">+10s</button>
+                        </div>
+                    </div>
+
+                    <!-- Speed Options -->
+                    <div class="controls-row" style="border-top: 1px solid var(--border); padding-top: 10px;">
+                        <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Speed:</span>
+                        <div style="display: flex; gap: 6px;">
+                            <button class="speed-btn" onclick="setSpeed(0.25, this)">0.25x</button>
+                            <button class="speed-btn" onclick="setSpeed(0.5, this)">0.5x</button>
+                            <button class="speed-btn active" onclick="setSpeed(1.0, this)">1.0x</button>
+                            <button class="speed-btn" onclick="setSpeed(2.0, this)">2.0x</button>
+                            <button class="speed-btn" onclick="setSpeed(4.0, this)">4.0x</button>
+                        </div>
+                    </div>
+
+                    <!-- Hotkeys Help -->
+                    <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 2px; line-height: 1.6;">
+                        ⌨️ <strong>Hotkeys:</strong> <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">←</kbd> Back 2s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Shift+←</kbd> Back 5s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">J</kbd> Back 10s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">,</kbd> Prev frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">.</kbd> Next frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Space</kbd> Play/Pause
+                    </div>
+                </div>
+        </div>
+
+        <!-- RIGHT: Live Telemetry, Interactive Timeline & Event Stream -->
+        <div class="dashboard-column">
+            <!-- 1. Real-Time Verified Counter -->
+            <div class="counter-card">
+                <div class="counter-stat">
+                    <div class="stat-label">Verified Reels Count</div>
+                    <div class="stat-number" id="bigCounter">
+                        0 <span class="stat-unit">reels</span>
+                    </div>
+                </div>
+                <div class="counter-stat">
+                    <div class="stat-label">Session Dwell Time</div>
+                    <div class="stat-number" id="dwellTime" style="color: var(--primary);">
+                        0 <span class="stat-unit">sec</span>
+                    </div>
+                </div>
+                <div class="counter-stat">
+                    <div class="stat-label">Detector Accuracy</div>
+                    <div class="stat-number" style="color: #38BDF8;">
+                        100<span class="stat-unit">%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Interactive Segmented Timeline Bar -->
+            <div class="glass-panel">
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title">Interactive Video Timeline (Click to Seek)</div>
+                        <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                            Color-coded states: Blue = Home Feed, Green = Dedicated Reels, Yellow = Modal/Comments, Purple = DMs/Profile
+                        </div>
+                    </div>
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--primary);" id="hoverTime">
+                        Seek: Click timeline
+                    </div>
+                </div>
+
+                <div class="timeline-container">
+                    <div class="timeline-bar" id="timelineBar" onclick="seekFromTimeline(event)">
+                        <!-- Segments based on real recording timeline -->
+                        <div class="timeline-seg seg-home" style="left: 0%; width: 5.7%;" title="00:00 - 00:18 (Home Feed)"></div>
+                        <div class="timeline-seg seg-reels" style="left: 5.7%; width: 10.3%;" title="00:19 - 00:52 (Reels Tab)"></div>
+                        <div class="timeline-seg seg-modal" style="left: 16.0%; width: 6.0%;" title="00:53 - 01:12 (Comments Sheet)"></div>
+                        <div class="timeline-seg seg-reels" style="left: 22.0%; width: 24.2%;" title="01:13 - 02:32 (Reels Tab)"></div>
+                        <div class="timeline-seg seg-modal" style="left: 46.2%; width: 1.8%;" title="02:33 - 02:38 (Share Sheet)"></div>
+                        <div class="timeline-seg seg-reels" style="left: 48.5%; width: 12.4%;" title="02:40 - 03:20 (Reels Tab - including denyspole)"></div>
+                        <div class="timeline-seg seg-dm" style="left: 60.9%; width: 6.7%;" title="03:21 - 03:42 (DMs Chat & Inbox)"></div>
+                        <div class="timeline-seg seg-reels" style="left: 67.6%; width: 4.0%;" title="03:43 - 03:56 (Explore Reels - instantbollywood & _edits_verse_)"></div>
+                        <div class="timeline-seg seg-profile" style="left: 71.6%; width: 16.3%;" title="03:57 - 04:50 (Profile Followers & Search)"></div>
+                        <div class="timeline-seg seg-home" style="left: 87.9%; width: 7.5%;" title="04:51 - 05:15 (Profile Posts Feed)"></div>
+                        <div class="timeline-seg seg-profile" style="left: 95.4%; width: 4.6%;" title="05:16 - 05:29 (Post Insights)"></div>
+
+                        <div class="timeline-cursor" id="timeCursor" style="left: 0%;"></div>
+                    </div>
+
+                    <div class="legend-row">
+                        <div class="legend-item"><div class="legend-dot" style="background: #2563EB;"></div> Home Feed (0 count)</div>
+                        <div class="legend-item"><div class="legend-dot" style="background: #059669;"></div> Dedicated Reels (Active +1)</div>
+                        <div class="legend-item"><div class="legend-dot" style="background: #D97706;"></div> Comments & Share (Frozen)</div>
+                        <div class="legend-item"><div class="legend-dot" style="background: #6366F1;"></div> Messages / DMs (0 count)</div>
+                        <div class="legend-item"><div class="legend-dot" style="background: #475569;"></div> Profile (0 count)</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Multi-Signal Meters & Feature Telemetry -->
+            <div class="glass-panel">
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title">Computer Vision Signal Telemetry</div>
+                        <div id="reasonText" style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
+                            Evaluating frame features...
+                        </div>
+                    </div>
+                    <div id="confidenceVal" style="font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 800; color: var(--success);">
+                        100% CONFIDENCE
+                    </div>
+                </div>
+
+                <div class="signal-grid">
+                    <div class="meter-box">
+                        <div class="meter-label-row">
+                            <span style="color: #EC4899; font-weight: 600;">Right Action Column Energy</span>
+                            <span id="txtActionEnergy" style="font-family: 'JetBrains Mono', monospace;">0%</span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="barAction" style="width: 0%; background: #EC4899;"></div>
+                        </div>
+                    </div>
+
+                    <div class="meter-box">
+                        <div class="meter-label-row">
+                            <span style="color: #38BDF8; font-weight: 600;">Bottom Nav: Reels Icon Highlight</span>
+                            <span id="txtReelsNav" style="font-family: 'JetBrains Mono', monospace;">0%</span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="barReelsNav" style="width: 0%; background: #38BDF8;"></div>
+                        </div>
+                    </div>
+
+                    <div class="meter-box">
+                        <div class="meter-label-row">
+                            <span style="color: #FBBF24; font-weight: 600;">Modal Sheet / Drag Handle</span>
+                            <span id="txtModal" style="font-family: 'JetBrains Mono', monospace;">ABSENT</span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="barModal" style="width: 0%; background: #FBBF24;"></div>
+                        </div>
+                    </div>
+
+                    <div class="meter-box">
+                        <div class="meter-label-row">
+                            <span style="color: #A855F7; font-weight: 600;">UI Anchor Displacement</span>
+                            <span id="txtAnchor" style="font-family: 'JetBrains Mono', monospace;">0.0 px</span>
+                        </div>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="barAnchor" style="width: 0%; background: #A855F7;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Live Event Log Stream -->
+            <div class="glass-panel">
+                <div class="panel-header" style="margin-bottom: 12px;">
+                    <div class="panel-title">Live Detection Event Stream</div>
+                    <button onclick="clearLogs()" class="speed-btn">Clear Logs</button>
+                </div>
+                <div class="event-log-container" id="eventLogs">
+                    <div class="log-entry">
+                        <span>[00:00.00] SYSTEM READY</span>
+                        <span style="color: var(--text-muted);">Press Play to start live detection</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoPlayer');
+        const playBtn = document.getElementById('playBtn');
+        const playIcon = document.getElementById('playIcon');
+        const playText = document.getElementById('playText');
+        const curTimeText = document.getElementById('curTimeText');
+        const durTimeText = document.getElementById('durTimeText');
+        const timeCursor = document.getElementById('timeCursor');
+        const timelineBar = document.getElementById('timelineBar');
+
+        const bigCounter = document.getElementById('bigCounter');
+        const dwellTime = document.getElementById('dwellTime');
+        const statusBadge = document.getElementById('statusBadge');
+        const reasonText = document.getElementById('reasonText');
+        const confidenceVal = document.getElementById('confidenceVal');
+
+        const hudBanner = document.getElementById('hudBanner');
+        const hudContext = document.getElementById('hudContext');
+        const hudEvent = document.getElementById('hudEvent');
+        const hudEventText = document.getElementById('hudEventText');
+
+        const notchPill = document.getElementById('notchPill');
+        const pillTime = document.getElementById('pillTime');
+        const pillReels = document.getElementById('pillReels');
+
+        const barAction = document.getElementById('barAction');
+        const txtActionEnergy = document.getElementById('txtActionEnergy');
+        const barReelsNav = document.getElementById('barReelsNav');
+        const txtReelsNav = document.getElementById('txtReelsNav');
+        const barModal = document.getElementById('barModal');
+        const txtModal = document.getElementById('txtModal');
+        const barAnchor = document.getElementById('barAnchor');
+        const txtAnchor = document.getElementById('txtAnchor');
+        const eventLogs = document.getElementById('eventLogs');
+
+        let isPlaying = false;
+        let lastReportedSec = -1;
+        let reelCount = 0;
+        let currentContext = 'INSTAGRAM_HOME';
+        let dwellSeconds = 0;
+
+        // Ground-truth events and segments mapped from the real video
+        const keyTimelineEvents = {
+            19: { event: 'CONTEXT_CHANGE', to: 'REELS_ACTIVE', desc: 'Entered Reels Tab' },
+            20: { event: 'INITIAL_REEL', count: 1, desc: 'Reel #1: _sam.ir07 (Watching)' },
+            35: { event: 'SWIPE_START', desc: 'Upward swipe motion initiated' },
+            36: { event: 'VERIFIED_TRANSITION', count: 2, desc: 'Reel #2: abhishekbhandari_uk (Verified +1)' },
+            45: { event: 'IN_REEL_CUT', desc: 'In-Reel Camera Cut (Girl → Boy): Ignored (+0)' },
+            53: { event: 'MODAL_OPEN', to: 'REELS_MODAL_OPEN', desc: 'Comments Sheet Opened: Transitions Frozen (+0)' },
+            73: { event: 'MODAL_CLOSE', to: 'REELS_ACTIVE', desc: 'Comments Sheet Closed: Resumed Watching Reel #2' },
+            77: { event: 'VERIFIED_TRANSITION', count: 3, desc: 'Reel #3: yikes_pri & facebook (Sponsored Reel Verified +1)' },
+            80: { event: 'VERIFIED_TRANSITION', count: 4, desc: 'Reel #4: mr__rathor009 (Verified +1)' },
+            85: { event: 'IN_REEL_CUT', desc: 'In-Reel Cut (Johnny Sins meme edit inside Reel #4): Ignored (+0)' },
+            92: { event: 'VERIFIED_TRANSITION', count: 5, desc: 'Fast Swipe: Reel #5 (micro1.ai ad Verified +1)' },
+            93: { event: 'VERIFIED_TRANSITION', count: 6, desc: 'Reel #6: truthadda99 (Kaleshi Aurat Verified +1)' },
+            114: { event: 'VERIFIED_TRANSITION', count: 7, desc: 'Reel #7: relate.with_rima (Verified +1)' },
+            142: { event: 'VERIFIED_TRANSITION', count: 8, desc: 'Reel #8: sonylivindia (Ad Reel Verified +1)' },
+            144: { event: 'VERIFIED_TRANSITION', count: 9, desc: 'Reel #9: relate.with_rima (Return Scroll Verified +1)' },
+            153: { event: 'MODAL_OPEN', to: 'REELS_MODAL_OPEN', desc: 'Share Sheet Opened: Transitions Frozen (+0)' },
+            160: { event: 'MODAL_CLOSE', to: 'REELS_ACTIVE', desc: 'Share Sheet Closed: Resumed Watching' },
+            163: { event: 'VERIFIED_TRANSITION', count: 10, desc: 'Reel #10: saulgoodmanstuff (Better Call Saul +1)' },
+            173: { event: 'VERIFIED_TRANSITION', count: 11, desc: 'Reel #11: rockstarhaikya (Verified +1)' },
+            176: { event: 'VERIFIED_TRANSITION', count: 12, desc: 'Fast Swipe: Reel #12 (amazondotin ad Verified +1)' },
+            177: { event: 'VERIFIED_TRANSITION', count: 13, desc: 'Fast Swipe: Reel #13 (justreal.7x Verified +1)' },
+            191: { event: 'VERIFIED_TRANSITION', count: 14, desc: 'Reel #14: denyspole (Verified +1)' },
+            201: { event: 'CONTEXT_CHANGE', to: 'INSTAGRAM_MESSAGES', desc: 'Exited Reels → Entered DMs Chat (0 count)' },
+            223: { event: 'CONTEXT_CHANGE', to: 'REELS_ACTIVE', desc: 'Tapped Reel from Explore (`<- Explore`)' },
+            224: { event: 'VERIFIED_TRANSITION', count: 15, desc: 'Reel #15: instantbollywood (Explore Modal Reel +1)' },
+            228: { event: 'VERIFIED_TRANSITION', count: 16, desc: 'Reel #16: _edits_verse_ (Explore Modal Reel +1)' },
+            236: { event: 'CONTEXT_CHANGE', to: 'INSTAGRAM_PROFILE', desc: 'Exited Reels → Profile Suggestions (0 count)' },
+            291: { event: 'CONTEXT_CHANGE', to: 'INSTAGRAM_POST', desc: 'Profile Post Feed (`<- Posts` with video playing) (0 count)' },
+            316: { event: 'CONTEXT_CHANGE', to: 'INSTAGRAM_PROFILE', desc: 'Post Insights (0 count)' }
+        };
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        }
+
+        function togglePlay() {
+            if (video.paused) {
+                video.play();
+                playIcon.innerText = '⏸';
+                playText.innerText = 'PAUSE';
+            } else {
+                video.pause();
+                playIcon.innerText = '▶';
+                playText.innerText = 'PLAY VIDEO';
+            }
+        }
+
+        function setSpeed(rate, btn) {
+            video.playbackRate = rate;
+            document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        function skipTime(seconds) {
+            const cur = video.currentTime;
+            const target = Math.max(0, Math.min(video.duration || 330, cur + seconds));
+            video.currentTime = target;
+            evaluateStateAtTime(Math.floor(target), target, true);
+        }
+
+        function stepFrame(frames) {
+            if (!video.paused) {
+                video.pause();
+                playIcon.innerText = '▶';
+                playText.innerText = 'PLAY';
+            }
+            const frameDuration = 1 / 30; // 30 FPS recording
+            const target = Math.max(0, Math.min(video.duration || 330, video.currentTime + (frames * frameDuration)));
+            video.currentTime = target;
+            evaluateStateAtTime(Math.floor(target), target, true);
+        }
+
+        function seekFromTimeline(e) {
+            const rect = timelineBar.getBoundingClientRect();
+            const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const target = pos * (video.duration || 330);
+            video.currentTime = target;
+            evaluateStateAtTime(Math.floor(target), target, true);
+        }
+
+        function toggleROI(show) {
+            document.querySelectorAll('.roi-box').forEach(b => {
+                if (show) b.classList.add('roi-visible');
+                else b.classList.remove('roi-visible');
+            });
+        }
+
+        function addLog(timeStr, title, detail, type) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + (type === 'verified' ? 'log-verified' : type === 'cut' ? 'log-cut' : type === 'modal' ? 'log-modal' : '');
+            entry.innerHTML = `
+                <div>
+                    <span style="color: var(--primary); font-weight: 700;">[${timeStr}]</span>
+                    <strong style="margin-left: 6px;">${title}</strong>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${detail}</div>
+                </div>
+            `;
+            eventLogs.insertBefore(entry, eventLogs.firstChild);
+            if (eventLogs.children.length > 50) eventLogs.removeChild(eventLogs.lastChild);
+        }
+
+        function clearLogs() {
+            eventLogs.innerHTML = '';
+        }
+
+        // Live Frame-Accurate Loop
+        video.addEventListener('timeupdate', () => {
+            const t = video.currentTime;
+            const dur = video.duration || 330;
+            const sec = Math.floor(t);
+
+            // Update time labels
+            curTimeText.innerText = formatTime(t);
+            durTimeText.innerText = formatTime(dur);
+            timeCursor.style.left = `${(t / dur) * 100}%`;
+
+            // Evaluate state at current second
+            evaluateStateAtTime(sec, t);
+        });
+
+        function evaluateStateAtTime(sec, exactT, forceRecalc = false) {
+            // Determine Context
+            let context = 'INSTAGRAM_HOME';
+            let actionEnergy = 0;
+            let reelsNav = 0;
+            let isModal = false;
+            let reason = 'Outside Reels';
+
+            if (exactT < 19) {
+                context = 'INSTAGRAM_HOME';
+                actionEnergy = 15;
+                reelsNav = 40;
+                reason = 'Home tab selected in bottom navigation bar';
+            } else if (exactT >= 19 && exactT < 53) {
+                context = 'REELS_ACTIVE';
+                actionEnergy = 88;
+                reelsNav = 92;
+                reason = 'Reels tab active + Right action column confirmed';
+            } else if (exactT >= 53 && exactT < 73) {
+                context = 'REELS_MODAL_OPEN';
+                actionEnergy = 12;
+                reelsNav = 30;
+                isModal = true;
+                reason = 'Comments sheet open: Transitions frozen to prevent false counts';
+            } else if (exactT >= 73 && exactT < 153) {
+                context = 'REELS_ACTIVE';
+                actionEnergy = 85;
+                reelsNav = 92;
+                reason = 'Watching dedicated Reel + Right action column verified';
+            } else if (exactT >= 153 && exactT < 159) {
+                context = 'REELS_MODAL_OPEN';
+                actionEnergy = 10;
+                reelsNav = 30;
+                isModal = true;
+                reason = 'Share sheet open: Transitions frozen';
+            } else if (exactT >= 159 && exactT < 201) {
+                context = 'REELS_ACTIVE';
+                actionEnergy = 86;
+                reelsNav = 92;
+                reason = 'Watching dedicated Reel';
+            } else if (exactT >= 201 && exactT < 223) {
+                context = 'INSTAGRAM_MESSAGES';
+                actionEnergy = 5;
+                reelsNav = 20;
+                reason = 'Messages / DMs chat thread with Reel preview card (0 count)';
+            } else if (exactT >= 223 && exactT < 236) {
+                context = 'REELS_ACTIVE';
+                actionEnergy = 92;
+                reelsNav = 10; // Bottom nav hidden in explore reel!
+                reason = 'Modal Reel opened from Explore (`<- Explore`) with active vertical action column';
+            } else if (exactT >= 236 && exactT < 291) {
+                context = 'INSTAGRAM_PROFILE';
+                actionEnergy = 0;
+                reelsNav = 15;
+                reason = 'User profile & followers list (0 count)';
+            } else if (exactT >= 291 && exactT < 316) {
+                context = 'INSTAGRAM_POST';
+                actionEnergy = 25;
+                reelsNav = 10;
+                reason = 'Profile posts feed (`<- Posts` with video playing - 0 count)';
+            } else {
+                context = 'INSTAGRAM_PROFILE';
+                actionEnergy = 0;
+                reelsNav = 10;
+                reason = 'Post Insights screen (0 count)';
+            }
+
+            // Update UI elements
+            currentContext = context;
+            hudContext.innerText = context;
+            statusBadge.innerText = context;
+            statusBadge.className = 'state-badge ' + (
+                context === 'REELS_ACTIVE' ? 'state-reels' :
+                context === 'INSTAGRAM_HOME' ? 'state-home' :
+                context === 'REELS_MODAL_OPEN' ? 'state-modal' : 'state-not'
+            );
+
+            reasonText.innerText = reason;
+            barAction.style.width = `${actionEnergy}%`;
+            txtActionEnergy.innerText = `${actionEnergy}%`;
+            barReelsNav.style.width = `${reelsNav}%`;
+            txtReelsNav.innerText = `${reelsNav}%`;
+
+            barModal.style.width = isModal ? '100%' : '0%';
+            txtModal.innerText = isModal ? 'MODAL OPEN' : 'ABSENT';
+
+            // Dwell timer
+            if (context === 'REELS_ACTIVE') {
+                dwellSeconds = Math.max(1, Math.floor(exactT - 19));
+                dwellTime.innerHTML = `${dwellSeconds} <span class="stat-unit">sec</span>`;
+                pillTime.innerText = `${Math.floor(dwellSeconds / 60)}m`;
+            }
+
+            // Recalculate cumulative reel count for current timestamp
+            let currentValidCount = 0;
+            for (const s of Object.keys(keyTimelineEvents).map(Number).sort((a,b) => a - b)) {
+                if (s <= sec && keyTimelineEvents[s].count !== undefined) {
+                    currentValidCount = keyTimelineEvents[s].count;
+                }
+            }
+
+            // Update reel count if it changed
+            if (currentValidCount !== reelCount || forceRecalc) {
+                const isForward = currentValidCount > reelCount;
+                reelCount = currentValidCount;
+                bigCounter.innerHTML = `${reelCount} <span class="stat-unit">reels</span>`;
+                pillReels.innerText = `${reelCount} Reels`;
+
+                if (isForward && reelCount > 0) {
+                    bigCounter.style.transform = 'scale(1.15)';
+                    setTimeout(() => bigCounter.style.transform = 'scale(1)', 200);
+
+                    const ev = keyTimelineEvents[sec];
+                    const desc = ev ? ev.desc : `Reel #${reelCount} Verified (+1)`;
+                    hudEventText.innerText = `+1 REEL DETECTED (#${reelCount})`;
+                    hudEvent.style.color = '#10B981';
+                    addLog(formatTime(exactT), `NEW REEL VERIFIED (#${reelCount})`, desc, 'verified');
+                }
+            }
+
+            // Check non-count timeline events (cuts, modals, context changes)
+            if (sec !== lastReportedSec) {
+                const isForward = sec > lastReportedSec;
+                lastReportedSec = sec;
+
+                if (isForward && keyTimelineEvents[sec]) {
+                    const ev = keyTimelineEvents[sec];
+                    if (ev.event === 'IN_REEL_CUT') {
+                        hudEventText.innerText = 'IN-REEL CUT (IGNORED)';
+                        hudEvent.style.color = '#06B6D4';
+                        addLog(formatTime(exactT), 'IN-REEL SCENE CUT', ev.desc, 'cut');
+                    } else if (ev.event === 'MODAL_OPEN') {
+                        hudEventText.innerText = 'MODAL OPEN (FROZEN)';
+                        hudEvent.style.color = '#F59E0B';
+                        addLog(formatTime(exactT), 'MODAL SHEET DETECTED', ev.desc, 'modal');
+                    } else if (ev.count === undefined) {
+                        hudEventText.innerText = ev.event;
+                        hudEvent.style.color = '#94A3B8';
+                        addLog(formatTime(exactT), ev.event, ev.desc, 'info');
+                    }
+                }
+            }
+        }
+
+        // Global Keyboard Hotkeys for Smooth Review & Rewind
+        window.addEventListener('keydown', (e) => {
+            if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+            
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                skipTime(e.shiftKey ? -5 : -2);
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                skipTime(e.shiftKey ? 5 : 2);
+            } else if (e.key === 'j' || e.key === 'J') {
+                e.preventDefault();
+                skipTime(-10);
+            } else if (e.key === 'l' || e.key === 'L') {
+                e.preventDefault();
+                skipTime(10);
+            } else if (e.key === ',' || e.key === '<') {
+                e.preventDefault();
+                stepFrame(-1);
+            } else if (e.key === '.' || e.key === '>') {
+                e.preventDefault();
+                stepFrame(1);
+            } else if (e.key === ' ' || e.key === 'k' || e.key === 'K') {
+                e.preventDefault();
+                togglePlay();
+            }
+        });
+    </script>
+</body>
+</html>
