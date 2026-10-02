@@ -532,8 +532,11 @@
 
                 <!-- Video Player Controls -->
                 <div class="controls-panel">
-                    <!-- Main Transport Controls: Rewind, Play, Forward -->
+                    <!-- Main Transport Controls: Restart, Rewind, Play, Forward -->
                     <div class="controls-row" style="justify-content: center; gap: 8px;">
+                        <button class="transport-btn" onclick="restartFromZero()" title="Start from 0:00 (Key 0 or Home)" style="border-color: rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.12); color: #38BDF8; font-weight: 700;">
+                            <span>⏮</span> <span>0:00</span>
+                        </button>
                         <button class="transport-btn" onclick="skipTime(-5)" title="Rewind 5 seconds (Shift + ←)">
                             <span>⏪</span> <span>-5s</span>
                         </button>
@@ -584,7 +587,7 @@
 
                     <!-- Hotkeys Help -->
                     <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 2px; line-height: 1.6;">
-                        ⌨️ <strong>Hotkeys:</strong> <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">←</kbd> Back 2s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Shift+←</kbd> Back 5s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">J</kbd> Back 10s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">,</kbd> Prev frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">.</kbd> Next frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Space</kbd> Play/Pause
+                        ⌨️ <strong>Hotkeys:</strong> <kbd style="background:#1E293B; border:1px solid #38BDF8; padding:2px 6px; border-radius:4px; color:#38BDF8; font-weight:700;">0</kbd> Start from 0:00 &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">←</kbd> Back 2s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Shift+←</kbd> Back 5s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">J</kbd> Back 10s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">,</kbd> Prev frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">.</kbd> Next frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Space</kbd> Play/Pause
                     </div>
                 </div>
         </div>
@@ -826,31 +829,63 @@
             btn.classList.add('active');
         }
 
+        function restartFromZero() {
+            video.currentTime = 0;
+            video.pause();
+            playIcon.innerText = '▶';
+            playText.innerText = 'PLAY VIDEO';
+            lastReportedSec = -1;
+            reelCount = 0;
+            dwellSeconds = 0;
+            curTimeText.innerText = '00:00';
+            timeCursor.style.left = '0%';
+            bigCounter.innerHTML = `0 <span class="stat-unit">reels</span>`;
+            pillReels.innerText = `0 Reels`;
+            dwellTime.innerHTML = `0 <span class="stat-unit">sec</span>`;
+            pillTime.innerText = `0m`;
+            eventLogs.innerHTML = `
+                <div class="log-entry" style="opacity: 0.6;">
+                    <div>
+                        <span style="color: var(--primary); font-weight: 700;">[00:00.00]</span>
+                        <strong style="margin-left: 6px;">RESTARTED AT 00:00</strong>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Session reset to Home Feed. Press Play to start detection.</div>
+                    </div>
+                </div>
+            `;
+            evaluateStateAtTime(0, 0, true);
+        }
+
         function skipTime(seconds) {
             const cur = video.currentTime;
             const target = Math.max(0, Math.min(video.duration || 330, cur + seconds));
             video.currentTime = target;
-            evaluateStateAtTime(Math.floor(target), target, true);
+            const sec = Math.floor(target);
+            lastReportedSec = sec - 1;
+            evaluateStateAtTime(sec, target, true);
         }
 
         function stepFrame(frames) {
             if (!video.paused) {
                 video.pause();
                 playIcon.innerText = '▶';
-                playText.innerText = 'PLAY';
+                playText.innerText = 'PLAY VIDEO';
             }
             const frameDuration = 1 / 30; // 30 FPS recording
             const target = Math.max(0, Math.min(video.duration || 330, video.currentTime + (frames * frameDuration)));
             video.currentTime = target;
-            evaluateStateAtTime(Math.floor(target), target, true);
+            const sec = Math.floor(target);
+            lastReportedSec = sec - 1;
+            evaluateStateAtTime(sec, target, true);
         }
 
         function seekFromTimeline(e) {
             const rect = timelineBar.getBoundingClientRect();
             const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-            const target = pos * (video.duration || 330);
+            const target = Math.max(0, Math.min(video.duration || 330, pos * (video.duration || 330)));
             video.currentTime = target;
-            evaluateStateAtTime(Math.floor(target), target, true);
+            const sec = Math.floor(target);
+            lastReportedSec = sec - 1;
+            evaluateStateAtTime(sec, target, true);
         }
 
         function toggleROI(show) {
@@ -878,7 +913,7 @@
             eventLogs.innerHTML = '';
         }
 
-        // Live Frame-Accurate Loop
+        // Native Video Event Listeners
         video.addEventListener('timeupdate', () => {
             const t = video.currentTime;
             const dur = video.duration || 330;
@@ -890,150 +925,179 @@
             timeCursor.style.left = `${(t / dur) * 100}%`;
 
             // Evaluate state at current second
-            evaluateStateAtTime(sec, t);
+            evaluateStateAtTime(sec, t, false);
         });
 
-        function evaluateStateAtTime(sec, exactT, forceRecalc = false) {
-            // Determine Context
-            let context = 'INSTAGRAM_HOME';
-            let actionEnergy = 0;
-            let reelsNav = 0;
-            let isModal = false;
-            let reason = 'Outside Reels';
+        video.addEventListener('seeked', () => {
+            const t = video.currentTime;
+            const dur = video.duration || 330;
+            const sec = Math.floor(t);
+            curTimeText.innerText = formatTime(t);
+            durTimeText.innerText = formatTime(dur);
+            timeCursor.style.left = `${(t / dur) * 100}%`;
+            lastReportedSec = sec - 1;
+            evaluateStateAtTime(sec, t, true);
+        });
 
-            if (exactT < 19) {
-                context = 'INSTAGRAM_HOME';
-                actionEnergy = 15;
-                reelsNav = 40;
-                reason = 'Home tab selected in bottom navigation bar';
-            } else if (exactT >= 19 && exactT < 53) {
-                context = 'REELS_ACTIVE';
-                actionEnergy = 88;
-                reelsNav = 92;
-                reason = 'Reels tab active + Right action column confirmed';
-            } else if (exactT >= 53 && exactT < 73) {
-                context = 'REELS_MODAL_OPEN';
-                actionEnergy = 12;
-                reelsNav = 30;
-                isModal = true;
-                reason = 'Comments sheet open: Transitions frozen to prevent false counts';
-            } else if (exactT >= 73 && exactT < 153) {
-                context = 'REELS_ACTIVE';
-                actionEnergy = 85;
-                reelsNav = 92;
-                reason = 'Watching dedicated Reel + Right action column verified';
-            } else if (exactT >= 153 && exactT < 159) {
-                context = 'REELS_MODAL_OPEN';
-                actionEnergy = 10;
-                reelsNav = 30;
-                isModal = true;
-                reason = 'Share sheet open: Transitions frozen';
-            } else if (exactT >= 159 && exactT < 201) {
-                context = 'REELS_ACTIVE';
-                actionEnergy = 86;
-                reelsNav = 92;
-                reason = 'Watching dedicated Reel';
-            } else if (exactT >= 201 && exactT < 223) {
-                context = 'INSTAGRAM_MESSAGES';
-                actionEnergy = 5;
-                reelsNav = 20;
-                reason = 'Messages / DMs chat thread with Reel preview card (0 count)';
-            } else if (exactT >= 223 && exactT < 236) {
-                context = 'REELS_ACTIVE';
-                actionEnergy = 92;
-                reelsNav = 10; // Bottom nav hidden in explore reel!
-                reason = 'Modal Reel opened from Explore (`<- Explore`) with active vertical action column';
-            } else if (exactT >= 236 && exactT < 291) {
-                context = 'INSTAGRAM_PROFILE';
-                actionEnergy = 0;
-                reelsNav = 15;
-                reason = 'User profile & followers list (0 count)';
-            } else if (exactT >= 291 && exactT < 316) {
-                context = 'INSTAGRAM_POST';
-                actionEnergy = 25;
-                reelsNav = 10;
-                reason = 'Profile posts feed (`<- Posts` with video playing - 0 count)';
-            } else {
-                context = 'INSTAGRAM_PROFILE';
-                actionEnergy = 0;
-                reelsNav = 10;
-                reason = 'Post Insights screen (0 count)';
-            }
+        video.addEventListener('loadedmetadata', () => {
+            durTimeText.innerText = formatTime(video.duration || 330);
+            evaluateStateAtTime(Math.floor(video.currentTime), video.currentTime, true);
+        });
 
-            // Update UI elements
-            currentContext = context;
-            hudContext.innerText = context;
-            statusBadge.innerText = context;
-            statusBadge.className = 'state-badge ' + (
-                context === 'REELS_ACTIVE' ? 'state-reels' :
-                context === 'INSTAGRAM_HOME' ? 'state-home' :
-                context === 'REELS_MODAL_OPEN' ? 'state-modal' : 'state-not'
-            );
+        function evaluateStateAtTime(sec, exactT, forceRecalc) {
+            forceRecalc = forceRecalc === true;
+            try {
+                // Determine Context
+                let context = 'INSTAGRAM_HOME';
+                let actionEnergy = 0;
+                let reelsNav = 0;
+                let isModal = false;
+                let reason = 'Outside Reels';
 
-            reasonText.innerText = reason;
-            barAction.style.width = `${actionEnergy}%`;
-            txtActionEnergy.innerText = `${actionEnergy}%`;
-            barReelsNav.style.width = `${reelsNav}%`;
-            txtReelsNav.innerText = `${reelsNav}%`;
-
-            barModal.style.width = isModal ? '100%' : '0%';
-            txtModal.innerText = isModal ? 'MODAL OPEN' : 'ABSENT';
-
-            // Dwell timer
-            if (context === 'REELS_ACTIVE') {
-                dwellSeconds = Math.max(1, Math.floor(exactT - 19));
-                dwellTime.innerHTML = `${dwellSeconds} <span class="stat-unit">sec</span>`;
-                pillTime.innerText = `${Math.floor(dwellSeconds / 60)}m`;
-            }
-
-            // Recalculate cumulative reel count for current timestamp
-            let currentValidCount = 0;
-            for (const s of Object.keys(keyTimelineEvents).map(Number).sort((a,b) => a - b)) {
-                if (s <= sec && keyTimelineEvents[s].count !== undefined) {
-                    currentValidCount = keyTimelineEvents[s].count;
+                if (exactT < 19) {
+                    context = 'INSTAGRAM_HOME';
+                    actionEnergy = 15;
+                    reelsNav = 40;
+                    reason = 'Home tab selected in bottom navigation bar';
+                } else if (exactT >= 19 && exactT < 53) {
+                    context = 'REELS_ACTIVE';
+                    actionEnergy = 88;
+                    reelsNav = 92;
+                    reason = 'Reels tab active + Right action column confirmed';
+                } else if (exactT >= 53 && exactT < 73) {
+                    context = 'REELS_MODAL_OPEN';
+                    actionEnergy = 12;
+                    reelsNav = 30;
+                    isModal = true;
+                    reason = 'Comments sheet open: Transitions frozen to prevent false counts';
+                } else if (exactT >= 73 && exactT < 153) {
+                    context = 'REELS_ACTIVE';
+                    actionEnergy = 85;
+                    reelsNav = 92;
+                    reason = 'Watching dedicated Reel + Right action column verified';
+                } else if (exactT >= 153 && exactT < 159) {
+                    context = 'REELS_MODAL_OPEN';
+                    actionEnergy = 10;
+                    reelsNav = 30;
+                    isModal = true;
+                    reason = 'Share sheet open: Transitions frozen';
+                } else if (exactT >= 159 && exactT < 201) {
+                    context = 'REELS_ACTIVE';
+                    actionEnergy = 86;
+                    reelsNav = 92;
+                    reason = 'Watching dedicated Reel';
+                } else if (exactT >= 201 && exactT < 223) {
+                    context = 'INSTAGRAM_MESSAGES';
+                    actionEnergy = 5;
+                    reelsNav = 20;
+                    reason = 'Messages / DMs chat thread with Reel preview card (0 count)';
+                } else if (exactT >= 223 && exactT < 236) {
+                    context = 'REELS_ACTIVE';
+                    actionEnergy = 92;
+                    reelsNav = 10; // Bottom nav hidden in explore reel!
+                    reason = 'Modal Reel opened from Explore (`<- Explore`) with active vertical action column';
+                } else if (exactT >= 236 && exactT < 291) {
+                    context = 'INSTAGRAM_PROFILE';
+                    actionEnergy = 0;
+                    reelsNav = 15;
+                    reason = 'User profile & followers list (0 count)';
+                } else if (exactT >= 291 && exactT < 316) {
+                    context = 'INSTAGRAM_POST';
+                    actionEnergy = 25;
+                    reelsNav = 10;
+                    reason = 'Profile posts feed (`<- Posts` with video playing - 0 count)';
+                } else {
+                    context = 'INSTAGRAM_PROFILE';
+                    actionEnergy = 0;
+                    reelsNav = 10;
+                    reason = 'Post Insights screen (0 count)';
                 }
-            }
 
-            // Update reel count if it changed
-            if (currentValidCount !== reelCount || forceRecalc) {
-                const isForward = currentValidCount > reelCount;
-                reelCount = currentValidCount;
-                bigCounter.innerHTML = `${reelCount} <span class="stat-unit">reels</span>`;
-                pillReels.innerText = `${reelCount} Reels`;
+                // Update UI elements
+                currentContext = context;
+                hudContext.innerText = context;
+                statusBadge.innerText = context;
+                statusBadge.className = 'state-badge ' + (
+                    context === 'REELS_ACTIVE' ? 'state-reels' :
+                    context === 'INSTAGRAM_HOME' ? 'state-home' :
+                    context === 'REELS_MODAL_OPEN' ? 'state-modal' : 'state-not'
+                );
 
-                if (isForward && reelCount > 0) {
-                    bigCounter.style.transform = 'scale(1.15)';
-                    setTimeout(() => bigCounter.style.transform = 'scale(1)', 200);
+                reasonText.innerText = reason;
+                barAction.style.width = `${actionEnergy}%`;
+                txtActionEnergy.innerText = `${actionEnergy}%`;
+                barReelsNav.style.width = `${reelsNav}%`;
+                txtReelsNav.innerText = `${reelsNav}%`;
 
-                    const ev = keyTimelineEvents[sec];
-                    const desc = ev ? ev.desc : `Reel #${reelCount} Verified (+1)`;
-                    hudEventText.innerText = `+1 REEL DETECTED (#${reelCount})`;
-                    hudEvent.style.color = '#10B981';
-                    addLog(formatTime(exactT), `NEW REEL VERIFIED (#${reelCount})`, desc, 'verified');
+                barModal.style.width = isModal ? '100%' : '0%';
+                txtModal.innerText = isModal ? 'MODAL OPEN' : 'ABSENT';
+
+                // Dwell timer: Count dwell ONLY when in active Reels context, else reset to 0
+                if (context === 'REELS_ACTIVE') {
+                    dwellSeconds = Math.max(0, Math.floor(exactT - 19));
+                    dwellTime.innerHTML = `${dwellSeconds} <span class="stat-unit">sec</span>`;
+                    pillTime.innerText = `${Math.floor(dwellSeconds / 60)}m`;
+                } else {
+                    dwellSeconds = 0;
+                    dwellTime.innerHTML = `0 <span class="stat-unit">sec</span>`;
+                    pillTime.innerText = `0m`;
                 }
-            }
 
-            // Check non-count timeline events (cuts, modals, context changes)
-            if (sec !== lastReportedSec) {
-                const isForward = sec > lastReportedSec;
-                lastReportedSec = sec;
-
-                if (isForward && keyTimelineEvents[sec]) {
-                    const ev = keyTimelineEvents[sec];
-                    if (ev.event === 'IN_REEL_CUT') {
-                        hudEventText.innerText = 'IN-REEL CUT (IGNORED)';
-                        hudEvent.style.color = '#06B6D4';
-                        addLog(formatTime(exactT), 'IN-REEL SCENE CUT', ev.desc, 'cut');
-                    } else if (ev.event === 'MODAL_OPEN') {
-                        hudEventText.innerText = 'MODAL OPEN (FROZEN)';
-                        hudEvent.style.color = '#F59E0B';
-                        addLog(formatTime(exactT), 'MODAL SHEET DETECTED', ev.desc, 'modal');
-                    } else if (ev.count === undefined) {
-                        hudEventText.innerText = ev.event;
-                        hudEvent.style.color = '#94A3B8';
-                        addLog(formatTime(exactT), ev.event, ev.desc, 'info');
+                // Recalculate cumulative reel count for current timestamp
+                let currentValidCount = 0;
+                const sortedKeys = Object.keys(keyTimelineEvents).map(Number).sort((a,b) => a - b);
+                for (const s of sortedKeys) {
+                    if (s <= sec && keyTimelineEvents[s].count !== undefined) {
+                        currentValidCount = keyTimelineEvents[s].count;
                     }
                 }
+
+                // Update reel count if it changed or force recalculation
+                if (currentValidCount !== reelCount || forceRecalc) {
+                    const countIncreased = currentValidCount > reelCount;
+                    reelCount = currentValidCount;
+                    bigCounter.innerHTML = `${reelCount} <span class="stat-unit">reels</span>`;
+                    pillReels.innerText = `${reelCount} Reels`;
+
+                    if (countIncreased && reelCount > 0) {
+                        bigCounter.style.transform = 'scale(1.15)';
+                        setTimeout(() => bigCounter.style.transform = 'scale(1)', 200);
+
+                        const ev = keyTimelineEvents[sec];
+                        const desc = ev ? ev.desc : `Reel #${reelCount} Verified (+1)`;
+                        hudEventText.innerText = `+1 REEL DETECTED (#${reelCount})`;
+                        hudEvent.style.color = '#10B981';
+                        addLog(formatTime(exactT), `NEW REEL VERIFIED (#${reelCount})`, desc, 'verified');
+                    } else if (reelCount === 0) {
+                        hudEventText.innerText = 'Monitoring';
+                        hudEvent.style.color = 'var(--text-muted)';
+                    }
+                }
+
+                // Check non-count timeline events (cuts, modals, context changes)
+                if (sec !== lastReportedSec) {
+                    const isForward = sec > lastReportedSec;
+                    lastReportedSec = sec;
+
+                    if (isForward && keyTimelineEvents[sec]) {
+                        const ev = keyTimelineEvents[sec];
+                        if (ev.event === 'IN_REEL_CUT') {
+                            hudEventText.innerText = 'IN-REEL CUT (IGNORED)';
+                            hudEvent.style.color = '#06B6D4';
+                            addLog(formatTime(exactT), 'IN-REEL SCENE CUT', ev.desc, 'cut');
+                        } else if (ev.event === 'MODAL_OPEN') {
+                            hudEventText.innerText = 'MODAL OPEN (FROZEN)';
+                            hudEvent.style.color = '#F59E0B';
+                            addLog(formatTime(exactT), 'MODAL SHEET DETECTED', ev.desc, 'modal');
+                        } else if (ev.count === undefined) {
+                            hudEventText.innerText = ev.event;
+                            hudEvent.style.color = '#94A3B8';
+                            addLog(formatTime(exactT), ev.event, ev.desc, 'info');
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Error in evaluateStateAtTime:', err);
             }
         }
 
@@ -1041,7 +1105,10 @@
         window.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
             
-            if (e.key === 'ArrowLeft') {
+            if (e.key === '0' || e.key === 'Home') {
+                e.preventDefault();
+                restartFromZero();
+            } else if (e.key === 'ArrowLeft') {
                 e.preventDefault();
                 skipTime(e.shiftKey ? -5 : -2);
             } else if (e.key === 'ArrowRight') {
@@ -1063,6 +1130,11 @@
                 e.preventDefault();
                 togglePlay();
             }
+        });
+
+        // Initialize state on load
+        window.addEventListener('DOMContentLoaded', () => {
+            evaluateStateAtTime(0, 0, true);
         });
     </script>
 </body>
