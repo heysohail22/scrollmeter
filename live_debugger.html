@@ -413,6 +413,7 @@
             height: 100%;
             position: absolute;
             top: 0;
+            pointer-events: none;
         }
         .seg-home { background: #2563EB; opacity: 0.75; }
         .seg-reels { background: #059669; opacity: 0.75; }
@@ -532,11 +533,8 @@
 
                 <!-- Video Player Controls -->
                 <div class="controls-panel">
-                    <!-- Main Transport Controls: Restart, Rewind, Play, Forward -->
+                    <!-- Main Transport Controls: Rewind, Play, Forward -->
                     <div class="controls-row" style="justify-content: center; gap: 8px;">
-                        <button class="transport-btn" onclick="restartFromZero()" title="Start from 0:00 (Key 0 or Home)" style="border-color: rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.12); color: #38BDF8; font-weight: 700;">
-                            <span>⏮</span> <span>0:00</span>
-                        </button>
                         <button class="transport-btn" onclick="skipTime(-5)" title="Rewind 5 seconds (Shift + ←)">
                             <span>⏪</span> <span>-5s</span>
                         </button>
@@ -587,7 +585,7 @@
 
                     <!-- Hotkeys Help -->
                     <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 2px; line-height: 1.6;">
-                        ⌨️ <strong>Hotkeys:</strong> <kbd style="background:#1E293B; border:1px solid #38BDF8; padding:2px 6px; border-radius:4px; color:#38BDF8; font-weight:700;">0</kbd> Start from 0:00 &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">←</kbd> Back 2s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Shift+←</kbd> Back 5s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">J</kbd> Back 10s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">,</kbd> Prev frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">.</kbd> Next frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Space</kbd> Play/Pause
+                        ⌨️ <strong>Hotkeys:</strong> <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">←</kbd> Back 2s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Shift+←</kbd> Back 5s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">J</kbd> Back 10s &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">,</kbd> Prev frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">.</kbd> Next frame &bull; <kbd style="background:#1E293B; border:1px solid #334155; padding:2px 6px; border-radius:4px; color:#F8FAFC;">Space</kbd> Play/Pause
                     </div>
                 </div>
         </div>
@@ -880,13 +878,34 @@
 
         function seekFromTimeline(e) {
             const rect = timelineBar.getBoundingClientRect();
-            const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-            const target = Math.max(0, Math.min(video.duration || 330, pos * (video.duration || 330)));
+            const clickX = e.clientX - rect.left;
+            const fraction = Math.max(0, Math.min(1, clickX / rect.width));
+            const duration = video.duration || 330;
+            const target = fraction * duration;
             video.currentTime = target;
             const sec = Math.floor(target);
             lastReportedSec = sec - 1;
             evaluateStateAtTime(sec, target, true);
         }
+
+        timelineBar.addEventListener('mousemove', (e) => {
+            const rect = timelineBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const fraction = Math.max(0, Math.min(1, clickX / rect.width));
+            const duration = video.duration || 330;
+            const hoverSec = fraction * duration;
+            const hoverTimeEl = document.getElementById('hoverTime');
+            if (hoverTimeEl) {
+                hoverTimeEl.innerText = `Seek to: ${formatTime(hoverSec)}`;
+            }
+        });
+
+        timelineBar.addEventListener('mouseleave', () => {
+            const hoverTimeEl = document.getElementById('hoverTime');
+            if (hoverTimeEl) {
+                hoverTimeEl.innerText = 'Seek: Click timeline';
+            }
+        });
 
         function toggleROI(show) {
             document.querySelectorAll('.roi-box').forEach(b => {
@@ -1105,10 +1124,7 @@
         window.addEventListener('keydown', (e) => {
             if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
             
-            if (e.key === '0' || e.key === 'Home') {
-                e.preventDefault();
-                restartFromZero();
-            } else if (e.key === 'ArrowLeft') {
+            if (e.key === 'ArrowLeft') {
                 e.preventDefault();
                 skipTime(e.shiftKey ? -5 : -2);
             } else if (e.key === 'ArrowRight') {
