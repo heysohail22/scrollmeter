@@ -18,19 +18,19 @@ data class DetectionConfig(
     var minMotionDifferenceThreshold: Float = 0.035f,
 
     /** Minimum vertical block flow magnitude (pixels in downscaled frame) to declare a swipe */
-    var swipeFlowThreshold: Float = 3.2f,
+    var swipeFlowThreshold: Float = 4.0f,
 
     /** Minimum percentage of blocks (0.50..0.95) that must agree on the vertical direction */
-    var motionConsensusThreshold: Float = 0.55f,
+    var motionConsensusThreshold: Float = 0.60f,
 
     /** Flow magnitude below which the screen is considered settling/stationary */
-    var settlingFlowThreshold: Float = 1.5f,
+    var settlingFlowThreshold: Float = 1.2f,
 
     /** Minimum duration (ms) the new screen must remain stable before confirming verified reel */
-    var settlingDwellMs: Long = 350L,
+    var settlingDwellMs: Long = 250L,
 
     /** Minimum Hamming distance (out of 64 bits) between dHash of previous and new Reel */
-    var minDHashHammingDistance: Int = 14,
+    var minDHashHammingDistance: Int = 10,
 
     /** Maximum allowed Hamming distance to consider an aborted swipe "the same Reel" */
     var sameReelBounceDistanceMax: Int = 6

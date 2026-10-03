@@ -22,7 +22,6 @@ class ReelDetectionStateMachine(
 ) {
     companion object {
         private const val TAG = "ReelStateMachine"
-        private const val MIN_REEL_COOLDOWN_MS = 1500L // Minimum 1.5 seconds between verified reels
     }
 
     var currentState: DetectorState = DetectorState.REELS_NOT_ACTIVE
@@ -39,7 +38,6 @@ class ReelDetectionStateMachine(
     private var candidateTimestamp: Long = 0L
     private var transitionStartTime: Long = 0L
     private var lastCandidateStatus: String = "Outside Reels"
-    private var lastVerifiedReelTimestamp: Long = 0L
 
     fun getCandidateStatus(): String = lastCandidateStatus
 
@@ -55,26 +53,15 @@ class ReelDetectionStateMachine(
         val currentHash = analysis.currentDHash
 
         // RULE 1: If outside Reels (Home feed, Explore, Profile, DMs, other apps)
-        // Transition counting MUST NEVER RUN outside Reels.
+        // Transition counting MUST NEVER RUN.
         if (contextMode == ReelsContextMode.REELS_NOT_ACTIVE) {
-            // If actively transitioning, allow the swipe up to 1200ms to complete and settle
-            if (currentState == DetectorState.TRANSITIONING || currentState == DetectorState.CANDIDATE_REEL || currentState == DetectorState.VERIFYING) {
-                if (timestampMs - transitionStartTime >= 1200L) {
-                    Log.i(TAG, "Transition timed out outside Reels -> REELS_NOT_ACTIVE")
-                    currentState = DetectorState.REELS_NOT_ACTIVE
-                    lastCandidateStatus = "Outside Reels"
-                    onEvent(ReelDetectionEvent.ContextChanged(false, "Exited Reels viewer"))
-                    return
-                }
-            } else {
-                if (currentState != DetectorState.REELS_NOT_ACTIVE && currentState != DetectorState.INACTIVE) {
-                    Log.i(TAG, "Exited Reels viewer -> REELS_NOT_ACTIVE (Transition tracking halted)")
-                    currentState = DetectorState.REELS_NOT_ACTIVE
-                    lastCandidateStatus = "Outside Reels (Home feed / other)"
-                    onEvent(ReelDetectionEvent.ContextChanged(false, "Exited Reels viewer"))
-                }
-                return
+            if (currentState != DetectorState.REELS_NOT_ACTIVE && currentState != DetectorState.INACTIVE) {
+                Log.i(TAG, "Exited Reels viewer -> REELS_NOT_ACTIVE (Transition tracking halted)")
+                currentState = DetectorState.REELS_NOT_ACTIVE
+                lastCandidateStatus = "Outside Reels (Home feed / other)"
+                onEvent(ReelDetectionEvent.ContextChanged(false, "Exited Reels viewer"))
             }
+            return
         }
 
         // RULE 2: If inside Reels, but Comment or Share modal sheet is open
@@ -193,18 +180,10 @@ class ReelDetectionStateMachine(
                 // Verify stability for the dwell duration
                 val dwellTime = timestampMs - candidateTimestamp
                 if (dwellTime >= config.settlingDwellMs) {
-                    if (timestampMs - lastVerifiedReelTimestamp < MIN_REEL_COOLDOWN_MS) {
-                        // Ignore intra-video motion / scene cuts within cooldown window
-                        currentState = DetectorState.REEL_VISIBLE
-                        lastCandidateStatus = "Ignored change within cooldown window"
-                        return
-                    }
-
                     val finalDist = hashAnalyzer.hammingDistance(currentHash, preTransitionHash)
                     if (finalDist >= config.minDHashHammingDistance) {
                         // VERIFIED NEW REEL!
                         totalReelCount++
-                        lastVerifiedReelTimestamp = timestampMs
                         referenceStableHash = currentHash
                         currentState = DetectorState.VERIFIED_REEL
                         lastCandidateStatus = "Verified Reel #$totalReelCount ($finalDist bits diff)"
@@ -238,7 +217,6 @@ class ReelDetectionStateMachine(
 
     fun resetCount() {
         totalReelCount = 0
-        lastVerifiedReelTimestamp = 0L
         referenceStableHash = 0L
         preTransitionHash = 0L
         candidateHash = 0L

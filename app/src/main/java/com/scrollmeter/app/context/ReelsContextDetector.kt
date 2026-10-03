@@ -27,23 +27,10 @@ class ReelsContextDetector(
     private var consecutiveActiveFrames: Int = 0
     private var consecutiveInactiveFrames: Int = 0
 
-    @Volatile
-    var isInstagramPackageInForeground: Boolean = true
-
     /**
      * Evaluates the incoming screen frame and returns the current ReelsContextMode.
      */
     fun evaluate(frame: FrameData): ReelsContextMode {
-        if (!isInstagramPackageInForeground) {
-            currentMode = ReelsContextMode.REELS_NOT_ACTIVE
-            lastSignals = ReelsContextSignals(
-                hasRightActionColumn = false,
-                confidence = 0f,
-                reason = "Outside Instagram application"
-            )
-            return currentMode
-        }
-
         // Quick bypass if user enabled Force Reels Mode for testing transition counting
         if (config.isForceReelsMode) {
             currentMode = ReelsContextMode.REELS_ACTIVE
@@ -88,7 +75,7 @@ class ReelsContextDetector(
         }
         val avgEdge = if (pixelCount > 0) edgeSum.toFloat() / pixelCount else 0f
         val brightRatio = if (pixelCount > 0) brightPixels.toFloat() / pixelCount else 0f
-        val hasActionColumn = (avgEdge >= 3.0f && brightRatio >= 0.015f) || (avgEdge >= 5.5f)
+        val hasActionColumn = avgEdge >= 7.0f
 
         // 2. Bottom Nav (Y: 93%..99%)
         val navY1 = (h * 0.93f).toInt()
@@ -110,9 +97,9 @@ class ReelsContextDetector(
 
         val homeVal = navAvg(0.04f, 0.16f)
         val reelsVal = navAvg(0.24f, 0.36f)
-        val hasNav = homeVal > 20f && reelsVal > 20f
+        val hasNav = homeVal > 25f && reelsVal > 25f
         val isHomeNav = hasNav && (homeVal > reelsVal * 1.15f)
-        val isReelsNav = hasNav && (reelsVal > homeVal * 1.20f)
+        val isReelsNav = hasNav && (reelsVal > homeVal * 1.25f)
 
         // 3. Top Header: Back arrow & Posts feed check
         val topY1 = (h * 0.04f).toInt()
@@ -177,66 +164,41 @@ class ReelsContextDetector(
         }
 
         // 5. Decision Tree (Deterministic, verified against ground truth)
-        val instantMode: ReelsContextMode
+        val targetMode: ReelsContextMode
         val reasonText: String
 
         if (hasPostsTitle) {
-            instantMode = ReelsContextMode.REELS_NOT_ACTIVE
+            targetMode = ReelsContextMode.REELS_NOT_ACTIVE
             reasonText = "Profile posts feed ('<- Posts') header detected"
         } else if (hasModalHandle && avgEdge < 12.0f) {
-            instantMode = ReelsContextMode.REELS_MODAL_OPEN
+            targetMode = ReelsContextMode.REELS_MODAL_OPEN
             reasonText = "Comments / Share modal drag-handle detected"
         } else if (isHomeNav) {
-            instantMode = ReelsContextMode.REELS_NOT_ACTIVE
+            targetMode = ReelsContextMode.REELS_NOT_ACTIVE
             reasonText = "Home tab icon active in bottom navigation"
-        } else if (isReelsNav) {
-            instantMode = ReelsContextMode.REELS_ACTIVE
-            reasonText = "Reels navigation tab active in bottom nav"
         } else if (hasActionColumn) {
-            instantMode = ReelsContextMode.REELS_ACTIVE
+            targetMode = ReelsContextMode.REELS_ACTIVE
             reasonText = "Reels action column verified"
         } else {
-            instantMode = ReelsContextMode.REELS_NOT_ACTIVE
+            targetMode = ReelsContextMode.REELS_NOT_ACTIVE
             reasonText = "No Reels action column or outside Reels"
         }
 
-        // Hysteresis & Debounce: Hold REELS_ACTIVE across brief swipe transitions
-        if (instantMode == ReelsContextMode.REELS_ACTIVE) {
-            consecutiveActiveFrames++
-            consecutiveInactiveFrames = 0
-            currentMode = ReelsContextMode.REELS_ACTIVE
-        } else if (instantMode == ReelsContextMode.REELS_MODAL_OPEN) {
-            consecutiveInactiveFrames++
-            if (consecutiveInactiveFrames >= 3) {
-                currentMode = ReelsContextMode.REELS_MODAL_OPEN
-            }
-        } else {
-            consecutiveActiveFrames = 0
-            consecutiveInactiveFrames++
-            if (isHomeNav || hasPostsTitle) {
-                currentMode = ReelsContextMode.REELS_NOT_ACTIVE
-            } else if (currentMode == ReelsContextMode.REELS_ACTIVE) {
-                if (consecutiveInactiveFrames >= 10) {
-                    currentMode = ReelsContextMode.REELS_NOT_ACTIVE
-                }
-            } else {
-                currentMode = ReelsContextMode.REELS_NOT_ACTIVE
-            }
-        }
-
-        val instantConfidence = when (currentMode) {
-            ReelsContextMode.REELS_ACTIVE -> (0.70f + 0.30f * (avgEdge / 12f).coerceIn(0f, 1f)).coerceIn(0.7f, 1.0f)
+        val instantConfidence = when (targetMode) {
+            ReelsContextMode.REELS_ACTIVE -> (0.60f + 0.40f * (avgEdge / 12f).coerceIn(0f, 1f)).coerceIn(0.6f, 1.0f)
             ReelsContextMode.REELS_MODAL_OPEN -> 0.85f
-            ReelsContextMode.REELS_NOT_ACTIVE -> 0.10f
+            ReelsContextMode.REELS_NOT_ACTIVE -> (avgEdge / 15f).coerceIn(0f, 0.25f)
         }
         smoothedConfidence = (smoothedConfidence * 0.40f) + (instantConfidence * 0.60f)
+
+        currentMode = targetMode
 
         lastSignals = ReelsContextSignals(
             hasRightActionColumn = hasActionColumn,
             rightActionColumnScore = (avgEdge / 10f).coerceIn(0f, 1f),
             hasHomeFeedStoriesOrHeader = isHomeNav || hasPostsTitle,
             storiesHeaderScore = if (isHomeNav) 1.0f else 0.0f,
-            isFullBleedVideo = currentMode == ReelsContextMode.REELS_ACTIVE,
+            isFullBleedVideo = targetMode == ReelsContextMode.REELS_ACTIVE,
             isModalSheetOpen = hasModalHandle,
             confidence = smoothedConfidence,
             reason = reasonText
