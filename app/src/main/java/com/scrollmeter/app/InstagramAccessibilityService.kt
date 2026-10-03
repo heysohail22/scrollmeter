@@ -101,9 +101,46 @@ class InstagramAccessibilityService : AccessibilityService() {
 
     fun isInstagramActive(): Boolean {
         if (isScrollMeterForeground) return false
-        val activeRoot = rootInActiveWindow ?: return false
-        val pkg = activeRoot.packageName?.toString() ?: ""
-        return pkg == INSTAGRAM_PKG
+        val activeRoot = rootInActiveWindow
+        val activePkg = activeRoot?.packageName?.toString() ?: ""
+        if (activePkg == INSTAGRAM_PKG) return true
+
+        // If the active window is a transient system UI overlay (volume panel, notification shade, IME, etc.)
+        // check if Instagram is still open right underneath
+        if (isTransientSystemUi(activePkg, activeRoot?.className?.toString() ?: "")) {
+            return try {
+                windows.any { it.root?.packageName?.toString() == INSTAGRAM_PKG }
+            } catch (_: Exception) {
+                false
+            }
+        }
+        return false
+    }
+
+    private fun isTransientSystemUi(pkg: String, className: String): Boolean {
+        if (pkg.isEmpty() || pkg == INSTAGRAM_PKG) return true
+        val p = pkg.lowercase()
+        val c = className.lowercase()
+        return p.contains("systemui") ||
+                p.contains("notification") ||
+                p.contains("inputmethod") ||
+                p.contains("volume") ||
+                p.contains("barrage") ||
+                p.contains("touchassistant") ||
+                p.contains("overlay") ||
+                p == "android" ||
+                p == "com.miui.daemon" ||
+                p == "com.xiaomi.misettings" ||
+                p == "com.miui.securitycenter" ||
+                p == packageName ||
+                p == "com.scrollmeter.app" ||
+                c.contains("toast") ||
+                c.contains("popup") ||
+                c.contains("panel") ||
+                c.contains("dialog") ||
+                c.contains("volume") ||
+                c.contains("shade") ||
+                c.contains("expandable")
     }
 
     override fun onCreate() {
@@ -140,6 +177,7 @@ class InstagramAccessibilityService : AccessibilityService() {
         instance = null
         onAppForegrounded()
         closeCurrentSessionIfActive()
+        currentSessionId = 0L
         notchOverlayManager.destroy()
         ReelTrackerState.setServiceRunning(false)
         ReelTrackerState.updateStatus("Accessibility Service stopped")
@@ -151,11 +189,10 @@ class InstagramAccessibilityService : AccessibilityService() {
         dwellJob?.cancel()
         dwellJob = null
         commitActiveReelTime()
-        closeCurrentSessionIfActive()
         activeCreator = ""
         activeRecordId = 0L
         activeReelStartTime = 0L
-        currentSessionId = 0L
+        lastReelActivityTimestamp = System.currentTimeMillis()
         notchOverlayManager.hide()
     }
 
@@ -189,6 +226,11 @@ class InstagramAccessibilityService : AccessibilityService() {
                 ?: (if (event.source?.packageName?.toString() == INSTAGRAM_PKG) event.source else null)
                 ?: return
 
+            // Resume live ticker immediately if returning to Instagram
+            if (currentSessionId > 0L && (liveTickerJob == null || liveTickerJob?.isActive == false)) {
+                startLiveTicker(currentSessionId)
+            }
+
             try {
                 inspectInstagramTree(rootNode, currentTime)
             } catch (e: Exception) {
@@ -198,22 +240,13 @@ class InstagramAccessibilityService : AccessibilityService() {
         }
 
         // 4. Event from a third-party / system package.
-        // Only reset tracking on a real window-state-change to a genuine non-transient app.
+        // Only pause tracking on a real window-state-change to a genuine non-transient app.
         // Ignore transient system overlays: IME, toasts, volume controls, status bar, and our overlay.
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val className = event.className?.toString() ?: ""
-            val isTransient = eventPkg.contains("inputmethod") ||
-                    eventPkg == "com.android.systemui" ||
-                    eventPkg == "android" ||
-                    eventPkg == packageName ||
-                    eventPkg == "com.scrollmeter.app" ||
-                    className.contains("Toast", ignoreCase = true) ||
-                    className.contains("PopupWindow", ignoreCase = true) ||
-                    className.contains("Panel", ignoreCase = true)
-
-            if (!isTransient) {
-                // A genuine foreground app replaced Instagram — stop tracking.
-                Log.d(TAG, "Real app foregrounded: $eventPkg — resetting tracker")
+            if (!isTransientSystemUi(eventPkg, className)) {
+                // A genuine foreground app replaced Instagram (e.g. YouTube, Chrome, Launcher)
+                Log.d(TAG, "Real app foregrounded: $eventPkg — pausing active reel")
                 onAppForegrounded()
             }
         }
