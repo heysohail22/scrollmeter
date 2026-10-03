@@ -189,7 +189,8 @@ fun ScrollMeterAppRoot() {
     }
 
     val startCaptureFlow: () -> Unit = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+        val isOverlayEnabled = NotchOverlayManager.isOverlayEnabled(context)
+        if (isOverlayEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
             try {
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
