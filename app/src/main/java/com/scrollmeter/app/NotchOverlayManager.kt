@@ -273,9 +273,11 @@ class NotchOverlayManager(private val context: Context) {
         val totalSecs = (ms / 1000).coerceAtLeast(0)
         val mins = totalSecs / 60
         val hours = mins / 60
+        val secs = totalSecs % 60
         return when {
             hours > 0 -> String.format(java.util.Locale.getDefault(), "%dh %02dm", hours, mins % 60)
-            else -> "${mins}m"
+            mins > 0 -> String.format(java.util.Locale.getDefault(), "%dm %02ds", mins, secs)
+            else -> "${secs}s"
         }
     }
 }

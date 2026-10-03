@@ -112,7 +112,7 @@ class ReelsContextDetector(
         val reelsVal = navAvg(0.24f, 0.36f)
         val hasNav = homeVal > 25f && reelsVal > 25f
         val isHomeNav = hasNav && (homeVal > reelsVal * 1.15f)
-        val isReelsNav = hasNav && (reelsVal > homeVal * 1.25f)
+        val isReelsNav = hasNav && (reelsVal > 45.0f) && (reelsVal > homeVal * 1.30f)
 
         // 3. Top Header: Back arrow & Posts feed check
         val topY1 = (h * 0.04f).toInt()
@@ -139,7 +139,20 @@ class ReelsContextDetector(
                 if ((lum[row + x].toInt() and 0xFF) > 180) postsPts++
             }
         }
-        val hasPostsTitle = hasBackArrow && ((postsPts.toFloat() / postsTotal) > 0.02f)
+
+        // Top right background check: on profile posts feed, the top app bar is solid dark (< 55)
+        val bgX1 = (w * 0.50f).toInt()
+        val bgX2 = (w * 0.80f).toInt()
+        var bgTotal = 0L
+        val bgCount = ((topY2 - topY1) * (bgX2 - bgX1)).coerceAtLeast(1)
+        for (y in topY1 until topY2) {
+            val row = y * w
+            for (x in bgX1 until bgX2) {
+                bgTotal += lum[row + x].toInt() and 0xFF
+            }
+        }
+        val topBg = bgTotal.toFloat() / bgCount
+        val hasPostsTitle = (topBg < 55f) && hasBackArrow && ((postsPts.toFloat() / postsTotal) > 0.02f)
 
         // 4. Modal Sheet: Drag handle
         var hasModalHandle = false
@@ -180,15 +193,18 @@ class ReelsContextDetector(
         val targetMode: ReelsContextMode
         val reasonText: String
 
-        if (hasPostsTitle) {
-            targetMode = ReelsContextMode.REELS_NOT_ACTIVE
-            reasonText = "Profile posts feed ('<- Posts') header detected"
-        } else if (hasModalHandle && avgEdge < 12.0f) {
+        if (hasModalHandle && avgEdge < 12.0f) {
             targetMode = ReelsContextMode.REELS_MODAL_OPEN
             reasonText = "Comments / Share modal drag-handle detected"
         } else if (isHomeNav) {
             targetMode = ReelsContextMode.REELS_NOT_ACTIVE
             reasonText = "Home tab icon active in bottom navigation"
+        } else if (isReelsNav) {
+            targetMode = ReelsContextMode.REELS_ACTIVE
+            reasonText = "Reels tab active in bottom navigation"
+        } else if (hasPostsTitle) {
+            targetMode = ReelsContextMode.REELS_NOT_ACTIVE
+            reasonText = "Profile posts feed ('<- Posts') header detected"
         } else if (hasActionColumn) {
             targetMode = ReelsContextMode.REELS_ACTIVE
             reasonText = "Reels action column verified"
