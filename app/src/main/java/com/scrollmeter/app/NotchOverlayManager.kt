@@ -179,7 +179,10 @@ class NotchOverlayManager(private val context: Context) {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = getStatusBarHeight() + dpToPx(3f)
+        params.y = getStatusBarHeight() + dpToPx(6f)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         return params
     }
 
@@ -188,19 +191,19 @@ class NotchOverlayManager(private val context: Context) {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE // Initially GONE until first genuine show
-            alpha = DEFAULT_OVERLAY_ALPHA
+            alpha = 1.0f
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            setPadding(dpToPx(11f), dpToPx(4.5f), dpToPx(11f), dpToPx(4.5f))
+            setPadding(dpToPx(14f), dpToPx(6f), dpToPx(14f), dpToPx(6f))
 
-            // Sleek Translucent Glass Pill Background with subtle border
+            // Sleek High-Contrast Glass Pill Background with bright purple accent border
             val bg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dpToPx(20f).toFloat()
-                setColor(Color.parseColor("#B80A0D18")) // Translucent dark glass (approx 72% opacity)
-                setStroke(dpToPx(1f), Color.parseColor("#448B3DFF")) // Soft, subtle accent border
+                cornerRadius = dpToPx(24f).toFloat()
+                setColor(Color.parseColor("#EE0B0E17")) // Deep dark glass (93% opaque)
+                setStroke(dpToPx(1.5f), Color.parseColor("#A855F7")) // Vibrant purple neon border
             }
             background = bg
-            elevation = dpToPx(2f).toFloat() // Soft minimal elevation, no harsh shadow
+            elevation = dpToPx(6f).toFloat()
 
             // Tap to open ScrollMeter App
             setOnClickListener {
@@ -214,16 +217,16 @@ class NotchOverlayManager(private val context: Context) {
             }
         }
 
-        // Active Status Dot (Green, slightly softer)
+        // Active Status Dot (Bright emerald green)
         val dot = View(context).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             val dotBg = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#34D399")) // Softer emerald green
+                setColor(Color.parseColor("#10B981"))
             }
             background = dotBg
-            val lp = LinearLayout.LayoutParams(dpToPx(5f), dpToPx(5f)).apply {
-                marginEnd = dpToPx(6f)
+            val lp = LinearLayout.LayoutParams(dpToPx(6f), dpToPx(6f)).apply {
+                marginEnd = dpToPx(7f)
             }
             layoutParams = lp
         }
@@ -232,8 +235,8 @@ class NotchOverlayManager(private val context: Context) {
         // Live Watch Time
         timeTextView = TextView(context).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setTextColor(Color.parseColor("#E2E8F0"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTextColor(Color.parseColor("#FFFFFF"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             text = "0m"
         }
@@ -243,16 +246,17 @@ class NotchOverlayManager(private val context: Context) {
         val bullet = TextView(context).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             text = " • "
-            setTextColor(Color.parseColor("#64748B"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setTextColor(Color.parseColor("#94A3B8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
         root.addView(bullet)
 
         // Reel Count
         countTextView = TextView(context).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setTextColor(Color.parseColor("#C084FC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTextColor(Color.parseColor("#D8B4FE"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             text = "0 reels"
         }
