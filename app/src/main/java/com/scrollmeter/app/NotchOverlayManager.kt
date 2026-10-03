@@ -63,7 +63,7 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     fun showOrUpdate(durationMs: Long, reelCount: Int) {
-        if (!isOverlayEnabled(context) || isScrollMeterForeground) {
+        if (!isOverlayEnabled(context)) {
             hide()
             return
         }
@@ -104,17 +104,10 @@ class NotchOverlayManager(private val context: Context) {
             }
         }
 
-        // Smoothly show view without re-adding to WindowManager
+        // Ensure visible
         if (overlayView != null && isAttached) {
-            if (overlayView?.visibility != View.VISIBLE) {
-                overlayView?.animate()?.cancel()
-                overlayView?.alpha = 0f
-                overlayView?.visibility = View.VISIBLE
-                overlayView?.animate()
-                    ?.alpha(DEFAULT_OVERLAY_ALPHA)
-                    ?.setDuration(200)
-                    ?.start()
-            }
+            overlayView?.visibility = View.VISIBLE
+            overlayView?.alpha = 1.0f
         }
     }
 
@@ -188,7 +181,7 @@ class NotchOverlayManager(private val context: Context) {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            visibility = View.GONE // Initially GONE until first genuine show
+            visibility = View.VISIBLE
             alpha = 1.0f
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             setPadding(dpToPx(14f), dpToPx(6f), dpToPx(14f), dpToPx(6f))

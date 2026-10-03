@@ -168,7 +168,16 @@ fun ScrollMeterAppRoot() {
     }
 
     val startCaptureFlow: () -> Unit = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+            try {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:${context.packageName}")
+                )
+                context.startActivity(intent)
+                Toast.makeText(context, "Please allow 'Display over other apps' for the floating pill", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {}
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)

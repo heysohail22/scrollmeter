@@ -267,6 +267,9 @@ class ScreenCaptureService : Service() {
             isReelsActive = true
             startLiveTicker(sessionId)
         }
+        mainHandler.post {
+            notchOverlayManager.showOrUpdate(0L, 0)
+        }
 
         Log.i(TAG, "ScreenCaptureService started successfully ($width x $height @ ${config.targetFps} FPS).")
     }
@@ -315,27 +318,16 @@ class ScreenCaptureService : Service() {
 
     private fun onContextChanged(event: ReelDetectionEvent.ContextChanged) {
         isReelsActive = event.isReelsActive
-        if (!event.isReelsActive) {
-            liveTickerJob?.cancel()
-            liveTickerJob = null
-            commitActiveReelTime()
-            notchOverlayManager.hide()
-        } else {
-            if (currentSessionId > 0L) {
-                startLiveTicker(currentSessionId)
-            }
+        if (event.isReelsActive && currentSessionId > 0L) {
+            startLiveTicker(currentSessionId)
         }
     }
 
     private fun startLiveTicker(sessionId: Long) {
         if (liveTickerJob?.isActive == true) return
-        if (!isReelsActive) {
-            notchOverlayManager.hide()
-            return
-        }
 
         liveTickerJob = serviceScope.launch {
-            while (isActive && isReelsActive) {
+            while (isActive && isRunning) {
                 val now = System.currentTimeMillis()
                 val currentRecId = activeRecordId
                 val currentStartTime = activeReelStartTime
