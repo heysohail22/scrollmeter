@@ -1,10 +1,13 @@
 package com.scrollmeter.app.capture
 
+import android.app.AppOpsManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -18,6 +21,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
 import android.util.DisplayMetrics
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -58,10 +62,11 @@ class ScreenCaptureService : Service() {
     companion object {
         private const val TAG = "ScreenCaptureService"
         const val CHANNEL_ID = "scrollmeter_capture_channel"
-        const val NOTIFICATION_ID = 1001
+        const val NOTIFICATION_ID = 8801
 
         const val ACTION_START = "com.scrollmeter.app.action.START_CAPTURE"
         const val ACTION_STOP = "com.scrollmeter.app.action.STOP_CAPTURE"
+
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
 
@@ -95,6 +100,76 @@ class ScreenCaptureService : Service() {
     private var lastReelActivityTimestamp: Long = 0L
     private var isReelsActive: Boolean = false
 
+    private var lastKnownForegroundPackage: String? = null
+    private var lastPackageCheckTime: Long = 0L
+
+    private fun hasUsageStatsPermission(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                packageName
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun isInstagramInForeground(): Boolean {
+        if (!hasUsageStatsPermission()) {
+            return true
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastPackageCheckTime < 500L && lastKnownForegroundPackage != null) {
+            return lastKnownForegroundPackage == "com.instagram.android"
+        }
+        lastPackageCheckTime = now
+
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return true
+
+        try {
+            val events = usm.queryEvents(now - 15000, now)
+            val event = UsageEvents.Event()
+            var latestEventTime = 0L
+            var latestPackage: String? = null
+
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+                    if (event.timeStamp >= latestEventTime) {
+                        latestEventTime = event.timeStamp
+                        latestPackage = event.packageName
+                    }
+                }
+            }
+
+            if (latestPackage != null) {
+                lastKnownForegroundPackage = latestPackage
+            } else {
+                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, now - 60000, now)
+                if (!stats.isNullOrEmpty()) {
+                    val topStat = stats.maxByOrNull { it.lastTimeUsed }
+                    if (topStat != null && topStat.lastTimeUsed > 0) {
+                        lastKnownForegroundPackage = topStat.packageName
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking foreground app via UsageStats", e)
+        }
+
+        return lastKnownForegroundPackage == "com.instagram.android"
+    }
+
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             Log.i(TAG, "MediaProjection stopped by system or user.")
@@ -119,7 +194,7 @@ class ScreenCaptureService : Service() {
         when (action) {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-                val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
                 } else {
                     @Suppress("DEPRECATION")
@@ -200,6 +275,8 @@ class ScreenCaptureService : Service() {
             height = height,
             targetFps = config.targetFps
         ) { frameData ->
+            val inInstagram = isInstagramInForeground()
+            ScreenCaptureManager.detector.contextDetector.isInstagramPackageInForeground = inInstagram
             ScreenCaptureManager.detector.onNewFrame(frameData)
         }
         frameSampler = sampler
@@ -259,16 +336,19 @@ class ScreenCaptureService : Service() {
             }
         }
 
-        // 8. Immediately ensure active session & start live ticker HUD
+        // 8. Reset counter and immediately ensure active session & start live ticker HUD
+        ReelTrackerState.resetCount()
+        ScreenCaptureManager.detector.resetCount()
+
         val now = System.currentTimeMillis()
         ensureActiveSession(now) { sessionId ->
-            activeReelStartTime = now
+            activeReelStartTime = 0L
             lastReelActivityTimestamp = now
-            isReelsActive = true
+            isReelsActive = false
             startLiveTicker(sessionId)
         }
         mainHandler.post {
-            notchOverlayManager.showOrUpdate(0L, 0)
+            notchOverlayManager.showOrUpdate(0L, 0, isInstagramActive = false)
         }
 
         Log.i(TAG, "ScreenCaptureService started successfully ($width x $height @ ${config.targetFps} FPS).")
@@ -318,8 +398,14 @@ class ScreenCaptureService : Service() {
 
     private fun onContextChanged(event: ReelDetectionEvent.ContextChanged) {
         isReelsActive = event.isReelsActive
-        if (event.isReelsActive && currentSessionId > 0L) {
-            startLiveTicker(currentSessionId)
+        if (event.isReelsActive) {
+            val now = System.currentTimeMillis()
+            if (activeReelStartTime == 0L) {
+                activeReelStartTime = now
+            }
+            lastReelActivityTimestamp = now
+        } else {
+            commitActiveReelTime()
         }
     }
 
@@ -329,10 +415,13 @@ class ScreenCaptureService : Service() {
         liveTickerJob = serviceScope.launch {
             while (isActive && isRunning) {
                 val now = System.currentTimeMillis()
+                val inInstagram = isInstagramInForeground()
+                val isCurrentlyActive = isReelsActive && inInstagram
+
                 val currentRecId = activeRecordId
                 val currentStartTime = activeReelStartTime
 
-                if (currentRecId > 0L && currentStartTime > 0L) {
+                if (isCurrentlyActive && currentRecId > 0L && currentStartTime > 0L) {
                     val elapsedMs = (now - currentStartTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
                     withContext(Dispatchers.IO) {
                         try {
@@ -342,37 +431,31 @@ class ScreenCaptureService : Service() {
                     }
                 }
 
-                var sessionDuration = if (activeReelStartTime > 0) (now - activeReelStartTime).coerceAtLeast(0L) else 0L
+                var sessionDuration = 0L
                 var sessionReels = ReelTrackerState.reelCount.value
 
                 withContext(Dispatchers.IO) {
                     try {
                         val sess = database.reelDao().getSessionById(sessionId)
                         if (sess != null) {
-                            sessionDuration = (sess.totalDurationMs + (now - activeReelStartTime)).coerceAtLeast(sess.totalDurationMs)
+                            val activeExtra = if (isCurrentlyActive && activeReelStartTime > 0) {
+                                (now - activeReelStartTime).coerceAtLeast(0L)
+                            } else 0L
+                            sessionDuration = (sess.totalDurationMs + activeExtra).coerceAtLeast(sess.totalDurationMs)
                             sessionReels = sess.totalReels.coerceAtLeast(ReelTrackerState.reelCount.value)
                         }
                     } catch (_: Exception) {}
                 }
 
-                if (!isReelsActive) {
-                    withContext(Dispatchers.Main) {
-                        notchOverlayManager.hide()
-                    }
-                    break
-                }
-
                 withContext(Dispatchers.Main) {
-                    notchOverlayManager.showOrUpdate(sessionDuration, sessionReels)
+                    notchOverlayManager.showOrUpdate(
+                        durationMs = sessionDuration,
+                        reelCount = sessionReels,
+                        isInstagramActive = isCurrentlyActive
+                    )
                 }
 
                 delay(1000L)
-            }
-
-            withContext(Dispatchers.Main) {
-                if (!isReelsActive) {
-                    notchOverlayManager.hide()
-                }
             }
         }
     }
@@ -394,8 +477,8 @@ class ScreenCaptureService : Service() {
                     dateString = getTodayDateString(),
                     startTime = currentTime,
                     endTime = currentTime,
-                    totalReels = 1,
-                    totalDurationMs = MIN_DWELL_TIME_MS
+                    totalReels = 0,
+                    totalDurationMs = 0L
                 )
                 val newId = database.reelDao().insertSession(newSession)
                 currentSessionId = newId
@@ -409,7 +492,6 @@ class ScreenCaptureService : Service() {
     }
 
     private fun commitActiveReelTime() {
-        liveTickerJob?.cancel()
         if (activeRecordId > 0 && activeReelStartTime > 0) {
             val now = System.currentTimeMillis()
             val elapsed = now - activeReelStartTime
@@ -428,6 +510,7 @@ class ScreenCaptureService : Service() {
                 }
             }
             activeRecordId = 0L
+            activeReelStartTime = 0L
         }
     }
 

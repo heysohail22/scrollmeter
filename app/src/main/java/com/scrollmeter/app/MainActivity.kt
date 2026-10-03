@@ -78,10 +78,31 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import android.app.AppOpsManager
+import android.os.Process
 import com.scrollmeter.app.capture.ScreenCaptureManager
 import com.scrollmeter.app.capture.ScreenCaptureService
 import com.scrollmeter.app.ui.DebugDashboardScreen
 import androidx.compose.material.icons.filled.Visibility
+
+fun hasUsageStatsPermission(context: Context): Boolean {
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    } else {
+        @Suppress("DEPRECATION")
+        appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    }
+    return mode == AppOpsManager.MODE_ALLOWED
+}
 
 
 // Design System Color Tokens
@@ -176,6 +197,12 @@ fun ScrollMeterAppRoot() {
                 )
                 context.startActivity(intent)
                 Toast.makeText(context, "Please allow 'Display over other apps' for the floating pill", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {}
+        } else if (!hasUsageStatsPermission(context)) {
+            try {
+                val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                context.startActivity(intent)
+                Toast.makeText(context, "Please enable Usage Access so ScrollMeter only runs on Instagram", Toast.LENGTH_LONG).show()
             } catch (_: Exception) {}
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

@@ -6,7 +6,7 @@ package com.scrollmeter.app.context
  */
 data class ReelsContextConfig(
     /** If true, bypasses auto-detection and forces REELS_ACTIVE for transition counting */
-    var isForceReelsMode: Boolean = true,
+    var isForceReelsMode: Boolean = false,
 
     // --- Configurable Signal Toggles ---
     /** Signal 1: Evaluate vertical right-side action pillar (Like, Comment, Share, Bookmark) */

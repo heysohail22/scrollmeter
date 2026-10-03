@@ -25,6 +25,7 @@ class NotchOverlayManager(private val context: Context) {
 
     private var timeTextView: TextView? = null
     private var countTextView: TextView? = null
+    private var statusDotView: View? = null
 
     companion object {
         private const val TAG = "NotchOverlay"
@@ -62,13 +63,13 @@ class NotchOverlayManager(private val context: Context) {
         return result
     }
 
-    fun showOrUpdate(durationMs: Long, reelCount: Int) {
+    fun showOrUpdate(durationMs: Long, reelCount: Int, isInstagramActive: Boolean = true) {
         if (!isOverlayEnabled(context)) {
             hide()
             return
         }
 
-        val timeStr = formatDuration(durationMs)
+        val timeStr = if (isInstagramActive) formatDuration(durationMs) else "Paused"
         val countStr = if (reelCount == 1) "1 reel" else "$reelCount reels"
 
         if (overlayView == null) {
@@ -80,6 +81,13 @@ class NotchOverlayManager(private val context: Context) {
         }
         if (countTextView?.text != countStr) {
             countTextView?.text = countStr
+        }
+
+        // Update dot color: Emerald Green when in Instagram, Amber when outside
+        val dotColor = if (isInstagramActive) "#10B981" else "#F59E0B"
+        statusDotView?.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor(dotColor))
         }
 
         // Attach to WindowManager once if not already attached
@@ -220,6 +228,7 @@ class NotchOverlayManager(private val context: Context) {
             }
             layoutParams = lp
         }
+        statusDotView = dot
         root.addView(dot)
 
         // Live Watch Time
