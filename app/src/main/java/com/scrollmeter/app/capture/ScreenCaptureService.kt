@@ -23,18 +23,35 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.scrollmeter.app.MainActivity
+import com.scrollmeter.app.NotchOverlayManager
+import com.scrollmeter.app.ReelTrackerState
+import com.scrollmeter.app.data.AppDatabase
+import com.scrollmeter.app.data.ReelRecord
+import com.scrollmeter.app.data.ReelSession
+import com.scrollmeter.app.detector.ReelDetectionEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * Modern Android 14+ compatible Foreground Service for Screen Capture.
+ * Modern Android 14+ compatible Foreground Service for Screen Capture & Computer Vision.
  * Strictly adheres to Android 14 requirements:
  * 1. Declares FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION in manifest and code.
  * 2. Invokes startForeground() prior to obtaining MediaProjection.
  * 3. Registers mandatory MediaProjection.Callback.
+ *
+ * Coordinates:
+ * - Real-time screen capture via VirtualDisplay & ImageReader
+ * - Pure Computer Vision detection (optical flow, dHash, and context detection)
+ * - Room database persistence for ReelRecords and ReelSessions
+ * - Live dwell-time ticker and floating Notch pill overlay
  */
 class ScreenCaptureService : Service() {
 
@@ -48,6 +65,10 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
 
+        private const val MIN_DWELL_TIME_MS = 1000L
+        private const val MAX_REEL_WATCH_CAP_MS = 300_000L // 5 minutes max
+        private const val SESSION_TIMEOUT_MS = 90_000L // 90 seconds idle starts new session
+
         @Volatile
         var isRunning: Boolean = false
             private set
@@ -59,9 +80,20 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
     private var frameSampler: FrameSampler? = null
 
+    private lateinit var database: AppDatabase
+    private lateinit var notchOverlayManager: NotchOverlayManager
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var notificationJob: Job? = null
+    private var eventCollectorJob: Job? = null
+    private var liveTickerJob: Job? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private var currentSessionId: Long = 0L
+    private var activeRecordId: Long = 0L
+    private var activeReelStartTime: Long = 0L
+    private var lastReelActivityTimestamp: Long = 0L
+    private var isReelsActive: Boolean = false
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -76,6 +108,8 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        database = AppDatabase.getInstance(applicationContext)
+        notchOverlayManager = NotchOverlayManager(this)
         createNotificationChannel()
     }
 
@@ -113,7 +147,7 @@ class ScreenCaptureService : Service() {
         if (isRunning) return
 
         // 1. Post initial foreground notification BEFORE calling getMediaProjection
-        val notification = buildNotification(0, "Initializing detector...")
+        val notification = buildNotification(0, "Initializing Computer Vision...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
@@ -153,7 +187,7 @@ class ScreenCaptureService : Service() {
         val realW = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
         val realH = if (metrics.heightPixels > 0) metrics.heightPixels else 2400
 
-        // Scale proportionately to match phone's exact aspect ratio (eliminates black bars/distortion!)
+        // Scale proportionately to match phone's exact aspect ratio
         val width = 180
         val height = ((width.toFloat() / realW) * realH).toInt().coerceIn(320, 480)
 
@@ -193,9 +227,11 @@ class ScreenCaptureService : Service() {
         }
 
         isRunning = true
+        ReelTrackerState.setServiceRunning(true)
+        ReelTrackerState.updateStatus("Computer Vision active & monitoring screen")
         ScreenCaptureManager.detector.startCapture()
 
-        // 6. Observe telemetry to update notification shade (throttled to avoid notification rate-limiting)
+        // 6. Observe telemetry to update notification shade
         notificationJob = serviceScope.launch {
             var lastCount = -1
             var lastUpdateMs = 0L
@@ -212,7 +248,206 @@ class ScreenCaptureService : Service() {
             }
         }
 
+        // 7. Observe detector events for Reel transitions, Room persistence, and live HUD updates
+        eventCollectorJob = serviceScope.launch {
+            ScreenCaptureManager.detector.events.collect { event ->
+                when (event) {
+                    is ReelDetectionEvent.ReelVerified -> onReelVerified(event)
+                    is ReelDetectionEvent.ContextChanged -> onContextChanged(event)
+                    else -> {}
+                }
+            }
+        }
+
+        // 8. Immediately ensure active session & start live ticker HUD
+        val now = System.currentTimeMillis()
+        ensureActiveSession(now) { sessionId ->
+            activeReelStartTime = now
+            lastReelActivityTimestamp = now
+            isReelsActive = true
+            startLiveTicker(sessionId)
+        }
+
         Log.i(TAG, "ScreenCaptureService started successfully ($width x $height @ ${config.targetFps} FPS).")
+    }
+
+    private fun getTodayDateString(): String {
+        return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    }
+
+    private fun onReelVerified(event: ReelDetectionEvent.ReelVerified) {
+        val now = System.currentTimeMillis()
+        commitActiveReelTime()
+
+        activeReelStartTime = now
+        lastReelActivityTimestamp = now
+        isReelsActive = true
+
+        val reelTitle = "Reel #${event.newTotal}"
+        ReelTrackerState.incrementCount(reelTitle)
+
+        ensureActiveSession(now) { sessionId ->
+            val record = ReelRecord(
+                sessionId = sessionId,
+                dateString = getTodayDateString(),
+                timestamp = now,
+                creator = reelTitle,
+                caption = "Verified via Optical Flow & dHash (${event.dHashDistance} bits diff)",
+                audioTrack = "Instagram Reel",
+                dwellTimeMs = MIN_DWELL_TIME_MS
+            )
+
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    val rowId = database.reelDao().insert(record)
+                    activeRecordId = rowId
+                    database.reelDao().refreshSessionStats(sessionId, now)
+
+                    withContext(Dispatchers.Main) {
+                        startLiveTicker(sessionId)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error saving ReelRecord to database", e)
+                }
+            }
+        }
+    }
+
+    private fun onContextChanged(event: ReelDetectionEvent.ContextChanged) {
+        isReelsActive = event.isReelsActive
+        if (!event.isReelsActive) {
+            liveTickerJob?.cancel()
+            liveTickerJob = null
+            commitActiveReelTime()
+            notchOverlayManager.hide()
+        } else {
+            if (currentSessionId > 0L) {
+                startLiveTicker(currentSessionId)
+            }
+        }
+    }
+
+    private fun startLiveTicker(sessionId: Long) {
+        if (liveTickerJob?.isActive == true) return
+        if (!isReelsActive) {
+            notchOverlayManager.hide()
+            return
+        }
+
+        liveTickerJob = serviceScope.launch {
+            while (isActive && isReelsActive) {
+                val now = System.currentTimeMillis()
+                val currentRecId = activeRecordId
+                val currentStartTime = activeReelStartTime
+
+                if (currentRecId > 0L && currentStartTime > 0L) {
+                    val elapsedMs = (now - currentStartTime).coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
+                    withContext(Dispatchers.IO) {
+                        try {
+                            database.reelDao().updateDwellTime(currentRecId, elapsedMs)
+                            database.reelDao().refreshSessionStats(sessionId, now)
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                var sessionDuration = if (activeReelStartTime > 0) (now - activeReelStartTime).coerceAtLeast(0L) else 0L
+                var sessionReels = ReelTrackerState.reelCount.value
+
+                withContext(Dispatchers.IO) {
+                    try {
+                        val sess = database.reelDao().getSessionById(sessionId)
+                        if (sess != null) {
+                            sessionDuration = (sess.totalDurationMs + (now - activeReelStartTime)).coerceAtLeast(sess.totalDurationMs)
+                            sessionReels = sess.totalReels.coerceAtLeast(ReelTrackerState.reelCount.value)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (!isReelsActive) {
+                    withContext(Dispatchers.Main) {
+                        notchOverlayManager.hide()
+                    }
+                    break
+                }
+
+                withContext(Dispatchers.Main) {
+                    notchOverlayManager.showOrUpdate(sessionDuration, sessionReels)
+                }
+
+                delay(1000L)
+            }
+
+            withContext(Dispatchers.Main) {
+                if (!isReelsActive) {
+                    notchOverlayManager.hide()
+                }
+            }
+        }
+    }
+
+    private fun ensureActiveSession(currentTime: Long, onReady: (Long) -> Unit) {
+        val isNewSessionNeeded = currentSessionId == 0L ||
+                (currentTime - lastReelActivityTimestamp > SESSION_TIMEOUT_MS)
+
+        lastReelActivityTimestamp = currentTime
+
+        if (isNewSessionNeeded) {
+            val oldSessionId = currentSessionId
+            serviceScope.launch(Dispatchers.IO) {
+                if (oldSessionId > 0) {
+                    database.reelDao().refreshSessionStats(oldSessionId, currentTime)
+                }
+
+                val newSession = ReelSession(
+                    dateString = getTodayDateString(),
+                    startTime = currentTime,
+                    endTime = currentTime,
+                    totalReels = 1,
+                    totalDurationMs = MIN_DWELL_TIME_MS
+                )
+                val newId = database.reelDao().insertSession(newSession)
+                currentSessionId = newId
+                withContext(Dispatchers.Main) {
+                    onReady(newId)
+                }
+            }
+        } else {
+            onReady(currentSessionId)
+        }
+    }
+
+    private fun commitActiveReelTime() {
+        liveTickerJob?.cancel()
+        if (activeRecordId > 0 && activeReelStartTime > 0) {
+            val now = System.currentTimeMillis()
+            val elapsed = now - activeReelStartTime
+            val finalDwellMs = elapsed.coerceIn(MIN_DWELL_TIME_MS, MAX_REEL_WATCH_CAP_MS)
+            val idToUpdate = activeRecordId
+            val sessId = currentSessionId
+
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    database.reelDao().updateDwellTime(idToUpdate, finalDwellMs)
+                    if (sessId > 0) {
+                        database.reelDao().refreshSessionStats(sessId, now)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error committing dwell time", e)
+                }
+            }
+            activeRecordId = 0L
+        }
+    }
+
+    private fun closeCurrentSessionIfActive() {
+        val sessId = currentSessionId
+        if (sessId > 0) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    database.reelDao().refreshSessionStats(sessId, System.currentTimeMillis())
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun stopCapture() {
@@ -221,6 +456,19 @@ class ScreenCaptureService : Service() {
 
         notificationJob?.cancel()
         notificationJob = null
+
+        eventCollectorJob?.cancel()
+        eventCollectorJob = null
+
+        liveTickerJob?.cancel()
+        liveTickerJob = null
+
+        commitActiveReelTime()
+        closeCurrentSessionIfActive()
+
+        try {
+            notchOverlayManager.destroy()
+        } catch (_: Exception) {}
 
         try {
             virtualDisplay?.release()
@@ -237,6 +485,8 @@ class ScreenCaptureService : Service() {
         }
 
         ScreenCaptureManager.detector.stopCapture()
+        ReelTrackerState.setServiceRunning(false)
+        ReelTrackerState.updateStatus("Computer Vision stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         Log.i(TAG, "ScreenCaptureService stopped and resources released.")
     }
@@ -268,7 +518,7 @@ class ScreenCaptureService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("ScrollMeter: $reelCount Reels Counted")
+            .setContentTitle("ScrollMeter CV: $reelCount Reels Counted")
             .setContentText(status)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
@@ -282,7 +532,7 @@ class ScreenCaptureService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "ScrollMeter Screen Capture",
+                "ScrollMeter Computer Vision",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Shows live Instagram Reels count and computer-vision detector status."

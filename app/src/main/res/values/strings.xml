@@ -1,5 +1,3 @@
 <resources>
     <string name="app_name">ScrollMeter</string>
-    <string name="accessibility_service_label">ScrollMeter Reels Tracker</string>
-    <string name="accessibility_service_description">Tracks Instagram Reel transitions on your device to help you monitor your screen time and reel count.</string>
 </resources>

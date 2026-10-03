@@ -33,8 +33,8 @@ It features a live **Floating Notch Pill** that sits unobtrusively under your fr
 ## 🛠️ Architecture & Tech Stack
 
 - **UI Framework**: Modern declarative UI built with **Jetpack Compose** & **Material 3**.
-- **Detection Engine**: Custom **Android AccessibilityService** (`InstagramAccessibilityService`) that monitors UI node hierarchy and content descriptions in real-time.
-- **Overlay Engine**: **WindowManager** application/accessibility overlay (`NotchOverlayManager`) rendered with translucent gradient glassmorphism.
+- **Detection Engine**: Pure **Computer Vision Pipeline** (`MediaProjection` + `OpticalFlowAnalyzer` + `PerceptualHashAnalyzer` + `ReelTransitionDetector`) operating on captured screen frames without requiring Accessibility permissions.
+- **Overlay Engine**: **WindowManager** system overlay (`NotchOverlayManager`) rendered with translucent gradient glassmorphism (`TYPE_APPLICATION_OVERLAY`).
 - **Local Persistence**: **Room Database** (SQLite) using Kotlin Coroutines & Flow for real-time UI updates.
 - **Language**: 100% **Kotlin**.
 
@@ -92,10 +92,10 @@ app/build/outputs/apk/debug/app-debug.apk
 
 Once installed, open **ScrollMeter** and grant the required permissions:
 
-1. **Accessibility Permission (Required for Reel Detection)**:
-   - Tap the top card (**"Service Inactive"**).
-   - In Android Settings ➔ **Accessibility** ➔ Find **ScrollMeter** (under *Downloaded Apps*) ➔ Turn it **ON**.
-2. **Display Over Other Apps (Required for the Floating Pill)**:
+1. **Screen Capture Permission (Required for Computer Vision Reel Detection)**:
+   - Tap the top card (**"Computer Vision Inactive"**).
+   - In the system prompt, grant **Screen Recording / Capture** permission.
+2. **Display Over Other Apps (Required for the Floating Notch Pill)**:
    - Toggle **Floating Notch Pill** inside the app.
    - When prompted, grant **Display over other apps** / **Appear on top** permission.
 
@@ -109,12 +109,14 @@ scrollmeter/
 │   ├── src/main/
 │   │   ├── AndroidManifest.xml
 │   │   ├── res/
-│   │   │   └── xml/accessibility_service_config.xml
 │   │   └── java/com/scrollmeter/app/
-│   │       ├── MainActivity.kt                # Jetpack Compose UI (Dashboard, History, Stats)
-│   │       ├── InstagramAccessibilityService.kt # Core detection & tracking service
+│   │       ├── MainActivity.kt                # Jetpack Compose UI (Dashboard, History, Vision)
 │   │       ├── NotchOverlayManager.kt          # Floating notch pill overlay window
 │   │       ├── ReelTrackerState.kt             # In-memory reactive state holder
+│   │       ├── capture/                        # MediaProjection Screen Capture Service
+│   │       ├── vision/                         # Optical flow, dHash, motion analyzers
+│   │       ├── detector/                       # Transition state machine & verification
+│   │       ├── context/                        # Visual Reels context detector
 │   │       └── data/
 │   │           ├── AppDatabase.kt             # Room DB instance
 │   │           ├── ReelRecord.kt              # ReelRecord & ReelSession entities

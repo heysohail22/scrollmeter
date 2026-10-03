@@ -5,8 +5,8 @@ package com.scrollmeter.app.context
  * Allows measuring the impact of individual signals on detection accuracy.
  */
 data class ReelsContextConfig(
-    /** If true, bypasses auto-detection and forces REELS_ACTIVE for testing transition counting */
-    var isForceReelsMode: Boolean = false,
+    /** If true, bypasses auto-detection and forces REELS_ACTIVE for transition counting */
+    var isForceReelsMode: Boolean = true,
 
     // --- Configurable Signal Toggles ---
     /** Signal 1: Evaluate vertical right-side action pillar (Like, Comment, Share, Bookmark) */

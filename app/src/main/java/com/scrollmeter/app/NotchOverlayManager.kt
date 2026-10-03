@@ -32,6 +32,7 @@ class NotchOverlayManager(private val context: Context) {
         const val PREFS_NAME = "scrollmeter_settings"
 
         private const val DEFAULT_OVERLAY_ALPHA = 0.72f // Translucent, non-distracting
+        var isScrollMeterForeground: Boolean = false
 
         fun isOverlayEnabled(context: Context): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -62,7 +63,7 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     fun showOrUpdate(durationMs: Long, reelCount: Int) {
-        if (!isOverlayEnabled(context) || InstagramAccessibilityService.isScrollMeterForeground) {
+        if (!isOverlayEnabled(context) || isScrollMeterForeground) {
             hide()
             return
         }
@@ -137,11 +138,8 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     private fun createLayoutParams(): WindowManager.LayoutParams {
-        val canDraw = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(context)
-        val overlayType = if (canDraw) {
+        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
@@ -163,7 +161,7 @@ class NotchOverlayManager(private val context: Context) {
 
     private fun createFallbackLayoutParams(): WindowManager.LayoutParams {
         val fallbackType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
@@ -208,7 +206,6 @@ class NotchOverlayManager(private val context: Context) {
             // Tap to open ScrollMeter App
             setOnClickListener {
                 try {
-                    InstagramAccessibilityService.onScrollMeterResumed()
                     val intent = Intent(context, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     }

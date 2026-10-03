@@ -14,6 +14,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+
 /**
  * High-level detection engine coordinating:
  * 1. Dedicated ReelsContextDetector (filters out Instagram Home feed, Explore, Profile)
@@ -32,6 +36,9 @@ class ReelTransitionDetector(
 
     private val _telemetry = MutableStateFlow(DetectionTelemetry())
     val telemetry: StateFlow<DetectionTelemetry> = _telemetry.asStateFlow()
+
+    private val _events = MutableSharedFlow<ReelDetectionEvent>(extraBufferCapacity = 64)
+    val events: SharedFlow<ReelDetectionEvent> = _events.asSharedFlow()
 
     // FPS calculation
     private var frameCount = 0
@@ -72,6 +79,7 @@ class ReelTransitionDetector(
             }
             recentLogs.addLast(logEntry)
         }
+        _events.tryEmit(event)
     }
 
     /**
@@ -90,20 +98,8 @@ class ReelTransitionDetector(
         val contextMode = contextDetector.evaluate(frame)
         val signals = contextDetector.lastSignals
 
-        // STEP 2: Motion Analysis (only run full motion pipeline when inside Reels)
-        val analysis = if (contextMode != ReelsContextMode.REELS_NOT_ACTIVE) {
-            motionAnalyzer.analyze(frame, stateMachine.referenceStableHash)
-        } else {
-            // When outside Reels, cheap diff is sufficient; optical flow is bypassed
-            FrameAnalysisResult(
-                frameDifferenceMad = 0f,
-                flow = FlowVector(),
-                currentDHash = 0L,
-                dHashDistanceVsStable = 0,
-                similarityScore = 100f,
-                isSignificantChange = false
-            )
-        }
+        // STEP 2: Motion Analysis (optical flow & perceptual hash)
+        val analysis = motionAnalyzer.analyze(frame, stateMachine.referenceStableHash)
 
         // STEP 3: Advance State Machine
         stateMachine.processFrame(analysis, contextMode, now)
