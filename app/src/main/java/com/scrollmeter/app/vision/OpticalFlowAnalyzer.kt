@@ -26,7 +26,7 @@ class OpticalFlowAnalyzer {
         private const val BLOCK_SIZE = 16
 
         // Search windows in pixels (downscaled space)
-        private const val SEARCH_Y_RANGE = 14
+        private const val SEARCH_Y_RANGE = 28
         private const val SEARCH_X_RANGE = 4
         private const val SEARCH_STEP = 2
     }

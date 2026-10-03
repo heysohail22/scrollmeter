@@ -128,7 +128,7 @@ class ScreenCaptureService : Service() {
         }
 
         val now = System.currentTimeMillis()
-        if (now - lastPackageCheckTime < 500L && lastKnownForegroundPackage != null) {
+        if (now - lastPackageCheckTime < 800L && lastKnownForegroundPackage != null) {
             return lastKnownForegroundPackage == "com.instagram.android"
         }
         lastPackageCheckTime = now
@@ -137,13 +137,19 @@ class ScreenCaptureService : Service() {
             ?: return true
 
         try {
-            val events = usm.queryEvents(now - 15000, now)
+            // Look back up to 10 minutes for the most recent Activity transition
+            val events = usm.queryEvents(now - 600_000L, now)
             val event = UsageEvents.Event()
             var latestEventTime = 0L
             var latestPackage: String? = null
 
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
+                // Filter out ScrollMeter itself
+                if (event.packageName == packageName) {
+                    continue
+                }
+
                 if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
                     if (event.timeStamp >= latestEventTime) {
                         latestEventTime = event.timeStamp
@@ -152,16 +158,10 @@ class ScreenCaptureService : Service() {
                 }
             }
 
+            // ONLY update if an explicit Activity transition was found.
+            // Never overwrite with null or fall back to inaccurate usage intervals.
             if (latestPackage != null) {
                 lastKnownForegroundPackage = latestPackage
-            } else {
-                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, now - 60000, now)
-                if (!stats.isNullOrEmpty()) {
-                    val topStat = stats.maxByOrNull { it.lastTimeUsed }
-                    if (topStat != null && topStat.lastTimeUsed > 0) {
-                        lastKnownForegroundPackage = topStat.packageName
-                    }
-                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error checking foreground app via UsageStats", e)
@@ -348,7 +348,7 @@ class ScreenCaptureService : Service() {
             startLiveTicker(sessionId)
         }
         mainHandler.post {
-            notchOverlayManager.showOrUpdate(0L, 0, isInstagramActive = false)
+            notchOverlayManager.showOrUpdate(0L, 0, isInstagramActive = false, isReelsActive = false)
         }
 
         Log.i(TAG, "ScreenCaptureService started successfully ($width x $height @ ${config.targetFps} FPS).")
@@ -451,7 +451,8 @@ class ScreenCaptureService : Service() {
                     notchOverlayManager.showOrUpdate(
                         durationMs = sessionDuration,
                         reelCount = sessionReels,
-                        isInstagramActive = isCurrentlyActive
+                        isInstagramActive = inInstagram,
+                        isReelsActive = isCurrentlyActive
                     )
                 }
 

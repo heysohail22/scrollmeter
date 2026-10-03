@@ -63,6 +63,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
+    // On-device ML Kit Text Recognition for Creator handle / caption extraction
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation("junit:junit:4.13.2")
 }

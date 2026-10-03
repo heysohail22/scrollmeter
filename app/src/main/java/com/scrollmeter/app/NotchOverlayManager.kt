@@ -63,7 +63,12 @@ class NotchOverlayManager(private val context: Context) {
         return result
     }
 
-    fun showOrUpdate(durationMs: Long, reelCount: Int, isInstagramActive: Boolean = true) {
+    fun showOrUpdate(
+        durationMs: Long,
+        reelCount: Int,
+        isInstagramActive: Boolean = true,
+        isReelsActive: Boolean = true
+    ) {
         if (!isOverlayEnabled(context)) {
             hide()
             return
@@ -83,8 +88,8 @@ class NotchOverlayManager(private val context: Context) {
             countTextView?.text = countStr
         }
 
-        // Update dot color: Emerald Green when in Instagram, Amber when outside
-        val dotColor = if (isInstagramActive) "#10B981" else "#F59E0B"
+        // Update dot color: Emerald Green when actively viewing Reels, Amber when paused/outside
+        val dotColor = if (isInstagramActive && isReelsActive) "#10B981" else "#F59E0B"
         statusDotView?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.parseColor(dotColor))

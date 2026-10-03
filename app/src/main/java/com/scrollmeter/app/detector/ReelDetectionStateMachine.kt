@@ -38,6 +38,7 @@ class ReelDetectionStateMachine(
     private var candidateTimestamp: Long = 0L
     private var transitionStartTime: Long = 0L
     private var lastCandidateStatus: String = "Outside Reels"
+    private var lastVerifiedReelTimestamp: Long = 0L
 
     fun getCandidateStatus(): String = lastCandidateStatus
 
@@ -53,15 +54,24 @@ class ReelDetectionStateMachine(
         val currentHash = analysis.currentDHash
 
         // RULE 1: If outside Reels (Home feed, Explore, Profile, DMs, other apps)
-        // Transition counting MUST NEVER RUN.
+        // Transition counting MUST NEVER RUN outside Reels.
         if (contextMode == ReelsContextMode.REELS_NOT_ACTIVE) {
-            if (currentState != DetectorState.REELS_NOT_ACTIVE && currentState != DetectorState.INACTIVE) {
-                Log.i(TAG, "Exited Reels viewer -> REELS_NOT_ACTIVE (Transition tracking halted)")
-                currentState = DetectorState.REELS_NOT_ACTIVE
-                lastCandidateStatus = "Outside Reels (Home feed / other)"
-                onEvent(ReelDetectionEvent.ContextChanged(false, "Exited Reels viewer"))
+            if (currentState == DetectorState.TRANSITIONING || currentState == DetectorState.CANDIDATE_REEL || currentState == DetectorState.VERIFYING) {
+                if (timestampMs - transitionStartTime > 1200L) {
+                    currentState = DetectorState.REELS_NOT_ACTIVE
+                    lastCandidateStatus = "Outside Reels"
+                    onEvent(ReelDetectionEvent.ContextChanged(false, "Exited Reels viewer"))
+                    return
+                }
+            } else {
+                if (currentState != DetectorState.REELS_NOT_ACTIVE && currentState != DetectorState.INACTIVE) {
+                    Log.i(TAG, "Exited Reels viewer -> REELS_NOT_ACTIVE (Transition tracking halted)")
+                    currentState = DetectorState.REELS_NOT_ACTIVE
+                    lastCandidateStatus = "Outside Reels (Home feed / other)"
+                    onEvent(ReelDetectionEvent.ContextChanged(false, "Exited Reels viewer"))
+                }
+                return
             }
-            return
         }
 
         // RULE 2: If inside Reels, but Comment or Share modal sheet is open
@@ -180,21 +190,30 @@ class ReelDetectionStateMachine(
                 // Verify stability for the dwell duration
                 val dwellTime = timestampMs - candidateTimestamp
                 if (dwellTime >= config.settlingDwellMs) {
-                    val finalDist = hashAnalyzer.hammingDistance(currentHash, preTransitionHash)
-                    if (finalDist >= config.minDHashHammingDistance) {
+                    if (lastVerifiedReelTimestamp != 0L && timestampMs - lastVerifiedReelTimestamp < 400L) {
+                        return
+                    }
+
+                    val distVsPre = hashAnalyzer.hammingDistance(currentHash, preTransitionHash)
+                    val distVsStable = if (referenceStableHash != 0L) {
+                        hashAnalyzer.hammingDistance(currentHash, referenceStableHash)
+                    } else distVsPre
+
+                    if (distVsPre >= config.minDHashHammingDistance && distVsStable >= config.minDHashHammingDistance) {
                         // VERIFIED NEW REEL!
                         totalReelCount++
+                        lastVerifiedReelTimestamp = timestampMs
                         referenceStableHash = currentHash
                         currentState = DetectorState.VERIFIED_REEL
-                        lastCandidateStatus = "Verified Reel #$totalReelCount ($finalDist bits diff)"
+                        lastCandidateStatus = "Verified Reel #$totalReelCount ($distVsStable bits diff)"
 
-                        Log.i(TAG, ">>> VERIFIED NEW REEL #$totalReelCount! (dHash dist=$finalDist bits) <<<")
-                        onEvent(ReelDetectionEvent.ReelVerified(totalReelCount, finalDist, dwellTime))
+                        Log.i(TAG, ">>> VERIFIED NEW REEL #$totalReelCount! (dHash dist=$distVsStable bits) <<<")
+                        onEvent(ReelDetectionEvent.ReelVerified(totalReelCount, distVsStable, dwellTime))
 
                         // Return to REEL_VISIBLE for subsequent swipes
                         currentState = DetectorState.REEL_VISIBLE
                     } else {
-                        val reason = "Failed final distinctness check ($finalDist bits vs ${config.minDHashHammingDistance})"
+                        val reason = "Failed distinctness check (pre=$distVsPre, stable=$distVsStable vs ${config.minDHashHammingDistance})"
                         Log.i(TAG, "Candidate rejected: $reason")
                         lastCandidateStatus = "Rejected: $reason"
                         currentState = DetectorState.REEL_VISIBLE
@@ -217,6 +236,7 @@ class ReelDetectionStateMachine(
 
     fun resetCount() {
         totalReelCount = 0
+        lastVerifiedReelTimestamp = 0L
         referenceStableHash = 0L
         preTransitionHash = 0L
         candidateHash = 0L

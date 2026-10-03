@@ -27,10 +27,23 @@ class ReelsContextDetector(
     private var consecutiveActiveFrames: Int = 0
     private var consecutiveInactiveFrames: Int = 0
 
+    @Volatile
+    var isInstagramPackageInForeground: Boolean = true
+
     /**
      * Evaluates the incoming screen frame and returns the current ReelsContextMode.
      */
     fun evaluate(frame: FrameData): ReelsContextMode {
+        if (!isInstagramPackageInForeground) {
+            currentMode = ReelsContextMode.REELS_NOT_ACTIVE
+            lastSignals = ReelsContextSignals(
+                hasRightActionColumn = false,
+                confidence = 0f,
+                reason = "Outside Instagram application"
+            )
+            return currentMode
+        }
+
         // Quick bypass if user enabled Force Reels Mode for testing transition counting
         if (config.isForceReelsMode) {
             currentMode = ReelsContextMode.REELS_ACTIVE
