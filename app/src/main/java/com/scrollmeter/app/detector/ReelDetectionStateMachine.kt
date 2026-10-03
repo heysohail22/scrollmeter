@@ -190,7 +190,8 @@ class ReelDetectionStateMachine(
                 // Verify stability for the dwell duration
                 val dwellTime = timestampMs - candidateTimestamp
                 if (dwellTime >= config.settlingDwellMs) {
-                    if (lastVerifiedReelTimestamp != 0L && timestampMs - lastVerifiedReelTimestamp < 400L) {
+                    if (lastVerifiedReelTimestamp != 0L && timestampMs - lastVerifiedReelTimestamp < config.minReelCooldownMs) {
+                        currentState = DetectorState.REEL_VISIBLE
                         return
                     }
 
