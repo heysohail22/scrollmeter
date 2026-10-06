@@ -1,9 +1,11 @@
 package com.scrollmeter.app
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -150,11 +152,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        InstagramAccessibilityService.onScrollMeterResumed()
         NotchOverlayManager.isScrollMeterForeground = true
     }
 
     override fun onStop() {
         super.onStop()
+        InstagramAccessibilityService.onScrollMeterPaused()
         NotchOverlayManager.isScrollMeterForeground = false
     }
 }
@@ -237,14 +241,26 @@ fun ScrollMeterAppRoot() {
     val dailyStats by reelDao.observeDailyStats().collectAsState(initial = emptyList())
     val allSessions by reelDao.observeAllSessions().collectAsState(initial = emptyList())
 
-    val isServiceActive = telemetry.isCaptureActive || ScreenCaptureService.isRunning
+    var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
+    val isServiceRunningState by ReelTrackerState.isServiceRunning.collectAsState()
+    val isServiceActive = isAccessibilityEnabled || isServiceRunningState
     var isNotchEnabled by remember {
         mutableStateOf(NotchOverlayManager.isOverlayEnabled(context))
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        InstagramAccessibilityService.onScrollMeterResumed()
         NotchOverlayManager.isScrollMeterForeground = true
+        isAccessibilityEnabled = checkAccessibilityEnabled(context)
         isNotchEnabled = NotchOverlayManager.isOverlayEnabled(context)
+    }
+
+    LaunchedEffect(Unit) {
+        try {
+            if (ScreenCaptureService.isRunning) {
+                ScreenCaptureManager.stopService(context)
+            }
+        } catch (_: Exception) {}
     }
 
     // Handle back button when viewing a session detail
@@ -355,11 +371,7 @@ fun ScrollMeterAppRoot() {
                             }
                         },
                         onServiceCardClick = {
-                            if (isServiceActive) {
-                                ScreenCaptureManager.stopService(context)
-                            } else {
-                                startCaptureFlow()
-                            }
+                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         },
                         onViewAllClick = { selectedNav = NavDestination.HISTORY },
                         onClearClick = { showClearDialog = true }
@@ -1090,13 +1102,13 @@ fun ServiceStatusCard(
 
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = if (isActive) "Computer Vision Active" else "Computer Vision Inactive",
+                        text = if (isActive) "Accessibility Service Active" else "Accessibility Service Inactive",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = ScrollMeterColors.PrimaryText
                     )
                     Text(
-                        text = if (isActive) "Monitoring Instagram Reels in real-time" else "Tap to start Screen Capture & CV tracking",
+                        text = if (isActive) "Monitoring Instagram Reels accurately in the background" else "Tap to enable in Accessibility Settings",
                         fontSize = 12.sp,
                         color = ScrollMeterColors.SecondaryText
                     )
@@ -1828,6 +1840,28 @@ fun getFormattedDate(daysOffset: Int): String {
     val cal = Calendar.getInstance()
     cal.add(Calendar.DAY_OF_YEAR, daysOffset)
     return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(cal.time)
+}
+
+private fun checkAccessibilityEnabled(context: Context): Boolean {
+    if (ReelTrackerState.isServiceRunning.value) return true
+
+    try {
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: ""
+        if (enabledServices.contains("com.scrollmeter.app", ignoreCase = true)) {
+            return true
+        }
+    } catch (_: Exception) {}
+
+    return try {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
+        val enabledList = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        enabledList.any { it.id.contains("com.scrollmeter.app", ignoreCase = true) }
+    } catch (_: Exception) {
+        false
+    }
 }
 
 @Composable

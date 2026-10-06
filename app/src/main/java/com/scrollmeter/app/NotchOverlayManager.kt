@@ -144,8 +144,11 @@ class NotchOverlayManager(private val context: Context) {
     }
 
     private fun createLayoutParams(): WindowManager.LayoutParams {
-        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val canDraw = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(context)
+        val overlayType = if (canDraw) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
@@ -167,7 +170,7 @@ class NotchOverlayManager(private val context: Context) {
 
     private fun createFallbackLayoutParams(): WindowManager.LayoutParams {
         val fallbackType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
@@ -212,6 +215,7 @@ class NotchOverlayManager(private val context: Context) {
             // Tap to open ScrollMeter App
             setOnClickListener {
                 try {
+                    InstagramAccessibilityService.onScrollMeterResumed()
                     val intent = Intent(context, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     }
